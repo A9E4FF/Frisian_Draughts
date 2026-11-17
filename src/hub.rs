@@ -1,7 +1,7 @@
 //! Hub v2 adapter. Protocol reference: Scan 3.1, Fabien Letouzey; GPL-3.0-only.
 //! Search runs in a worker with cooperative limits and responsive command input.
 use crate::search::{search_with_control, SearchControl, SearchLimits, SearchResult};
-use crate::{Error, Game, Piece, Position, Side, Square};
+use crate::{Error, Game, KingRestriction, Piece, Position, Side, Square};
 use std::io::{self, BufRead, Write};
 use std::sync::Mutex;
 use std::thread;
@@ -233,6 +233,7 @@ pub fn run(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
         let mut shutdown = StopOnDrop(None);
         let mut game = Game::default();
         let mut memory = 16;
+        let mut tt_enabled = true;
         let mut limits = SearchLimits::default();
         let mut duration = None;
         let mut ready = false;
@@ -272,7 +273,7 @@ pub fn run(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                         line(
                             &output,
                             &format!(
-                                "id name=Frisian-Draughts version={} author=Contributors",
+                                "id name=Frisian-Draughts version={} author=Contributors extensions=frisian-state-v1",
                                 env!("CARGO_PKG_VERSION")
                             ),
                         )?;
@@ -284,6 +285,7 @@ pub fn run(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                             &output,
                             "param name=tt-size value=16 type=int min=1 max=256",
                         )?;
+                        line(&output, "param name=tt-enabled value=true type=bool")?;
                         line(&output, "wait")?;
                     }
                     "set-param" => match (m.get("name"), m.get("value")) {
@@ -295,6 +297,10 @@ pub fn run(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                             let size = v.parse().map_err(|_| Error("invalid tt-size".into()))?;
                             limits = limits.with_tt_megabytes(size)?;
                             memory = size;
+                        }
+                        (Some("tt-enabled"), Some(v)) => {
+                            tt_enabled = v.parse().map_err(|_| Error("tt-enabled must be true or false".into()))?;
+                            limits = limits.with_tt_enabled(tt_enabled);
                         }
                         _ => {}
                     },
@@ -320,25 +326,42 @@ pub fn run(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                         game = Game::default();
                     }
                     "pos" => {
-                        let p = if let Some(v) = m.get("pos") {
+                        let mut p = if let Some(v) = m.get("pos") {
                             Position::from_hub(v)?
                         } else if m.has("start") {
                             Position::starting()
                         } else {
                             return Err(Error("pos requires pos= or start".into()));
                         };
+                        if let Some(state) = m.get("frisian-state") {
+                            let fields: Vec<_> = state.split(',').collect();
+                            if fields.len() != 2 { return Err(Error("frisian-state requires white,black square:count".into())); }
+                            let mut restrictions = [None; 2];
+                            for (i, field) in fields.iter().enumerate() {
+                                let (square, count) = field.split_once(':').ok_or_else(|| Error("invalid restriction state".into()))?;
+                                if *field != "0:0" {
+                                    let square = square.parse().map_err(|_| Error("invalid restriction square".into()))?;
+                                    let count = count.parse().map_err(|_| Error("invalid restriction count".into()))?;
+                                    restrictions[i] = Some(KingRestriction::new(Square::new(square)?, count)?);
+                                }
+                            }
+                            let pieces: Vec<_> = (1..=50).filter_map(|n| {
+                                let sq = Square::new(n).unwrap(); p.piece_at(sq).map(|(s, pc)| (sq, s, pc))
+                            }).collect();
+                            p = Position::new(p.turn(), &pieces, restrictions)?;
+                        }
                         let mut next = Game::new(p);
                         for text in m.get("moves").unwrap_or("").split_whitespace() {
                             let mv = next.position().parse_move(text)?;
                             next.play(&mv)?;
                         }
                         game = next;
-                        limits = SearchLimits::default().with_tt_megabytes(memory)?;
+                        limits = SearchLimits::default().with_tt_megabytes(memory)?.with_tt_enabled(tt_enabled);
                         duration = None;
                     }
                     "level" => {
                         let next = level(&m, memory)?;
-                        limits = next.0;
+                        limits = next.0.with_tt_enabled(tt_enabled);
                         duration = next.1;
                     }
                     "go" => {
@@ -388,7 +411,7 @@ pub fn run(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                             handle,
                             if m.has("ponder") { duration } else { None },
                         ));
-                        limits = SearchLimits::default().with_tt_megabytes(memory)?;
+                        limits = SearchLimits::default().with_tt_megabytes(memory)?.with_tt_enabled(tt_enabled);
                         duration = None;
                     }
                     _ => {}

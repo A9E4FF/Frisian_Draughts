@@ -184,3 +184,17 @@ game history is always retained; raw logs are diagnostic rather than archival.
 Exit status: 0 for completed/adjudicated games, 1 for engine/referee failures,
 2 for configuration or report errors. Tests can enable real Rust integration
 with `FRISIAN_TEST_ENGINE`; Linux and Windows engine CI do this automatically.
+
+## Position cases (stage 5)
+
+The existing position-suite CLI accepts `--protocol hub --referee PATH` with
+optional `--engine-cwd`. JSON remains its default. See
+[position-suite usage](position-suite.md). Both backends preserve the version-1
+case model, accepted alternatives, analysis-only status, history and restrictions.
+
+Rust advertises `extensions=frisian-state-v1` in its Hub identity. The optional
+`pos frisian-state=<white-square>:<count>,<black-square>:<count>` argument restores
+initial restrictions before replay; `0:0` means no restriction. It is a project
+extension, not standard Hub. Only send it after checking the advertised identity.
+Rust also advertises the optional `tt-enabled` parameter so baseline tests remain
+available over Hub. Unsupported explicit settings fail visibly.

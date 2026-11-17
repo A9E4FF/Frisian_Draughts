@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "positions": [
+    {"name": "Quiet sacrifice and forced exchange", "fen": "B:W25,27,29,35,36,39-50:B1-9,14-16", "depth": 3, "accepted_moves": ["14-20"], "notes": "Existing exhaustive-minimax-backed Rust fixture."},
+    {"name": "Orthogonal edge trap", "fen": "W:W31:B16", "depth": 1, "accepted_moves": ["31-27"]},
+    {"name": "Capture through promotion row", "fen": "W:W11:B7,8", "depth": 2, "accepted_moves": ["11x13"]},
+    {"name": "Multiple accepted king landings", "fen": "W:WK28:B23", "depth": 2, "accepted_moves": ["28x19", "28x14", "28x10", "28x5"]},
+    {"name": "Tracked king at restriction limit", "fen": "W:WK28,46:B1", "depth": 2, "restrictions": {"white": {"square": 28, "count": 3}}, "accepted_moves": [], "notes": "Analysis-only full-state regression; requires state extension on import."},
+    {"name": "Threefold replay", "fen": "W:WK1:BK5", "depth": 2, "moves": ["1-12", "5-10", "12-1", "10-5", "1-12", "5-10", "12-1", "10-5"], "accepted_moves": []},
+    {"name": "Promotion race", "fen": "W:W11,35:B16,40", "depth": 4, "accepted_moves": [], "notes": "Exploratory analysis; no unverified expected move."}
+  ]
+}

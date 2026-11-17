@@ -97,6 +97,29 @@ Depth and expected moves belong to each case so regression runs are reproducible
 
 ## Engine interface and tests
 
+The existing JSON backend remains the default. To use a Hub v2 engine:
+
+```sh
+python3 -m tools.position_suite run tools/position_suite/sample-suite.json --protocol hub --engine /path/to/scan --engine-cwd /path/to/scan-data --referee target/release/frisian-draughts --logs hub-position-logs
+```
+
+The separate Rust referee validates imported states, accepted alternatives,
+selected moves and the final PV. Existing version-1 cases load unchanged.
+Analysis-only remains distinct from pass; cancellation never produces a verdict.
+Hub scores in men are normalized to the JSON backend's 100-points-per-man scale.
+TT counters absent from a generic engine are not available in this backend.
+
+Imported nonzero king restrictions need the advertised `frisian-state-v1`
+extension (implemented by Rust). Unsupported engines report an explicit error
+instead of silently clearing counters. Replay from a known cleared position
+works over ordinary Hub. Explicit TT-disable/memory requests also error when
+the selected engine does not advertise the required parameter.
+
+`tools/testbench/examples/regression-suite.json` adds a known quiet sacrifice,
+orthogonal trap, promotion-row capture, alternative king captures, restriction
+state, threefold replay and an analysis-only promotion race. Exploratory cases
+are not assigned unverified expected moves.
+
 The client starts `ENGINE --analysis-json`, writes a single JSON request line,
 closes stdin, and reads JSON events through EOF. `loaded` events provide the board
 and canonical accepted moves, `iteration` streams progress, `result` carries the
@@ -115,3 +138,4 @@ exercise the bundled suite after building the Rust binary. An optional Tk widget
 smoke test runs when `DISPLAY` is set; it tests preview, live analysis, alternative
 answers, suite save/load, log export, cancellation, and recovery. Set
 `FRISIAN_TEST_ENGINE` to choose the binary for this test (default: the debug binary).
+

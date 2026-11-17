@@ -2,10 +2,10 @@
 
 The new `tools.testbench` package establishes a GUI-independent Hub v2 contract
 before changing the engine. Existing terminal play, Rust search, and
-`--analysis-json` remain unchanged. Stage 2 adds `frisian-draughts hub` with
-depth-only synchronous searches. Until stage 3, do not use time/node controls,
-infinite analysis, pondering or expect stop/ping to interrupt an active search.
-Unsupported limit/search modes produce explicit protocol errors. `pos start` is
+`--analysis-json` remain unchanged. `frisian-draughts hub` supports depth/node/time
+limits, think/analyze/ponder modes, stop and ping during search, and ponder-hit.
+Depth is capped at 64; infinite analysis may complete early as Hub permits.
+`pos start` is
 accepted for compatibility with the supplied GUI in addition to standard boards.
 
 ## Run
@@ -111,3 +111,34 @@ move it into `Frisian_Draughts_Testbench` once the shared interfaces stabilize.
 Rust and Scan engine sources remain separate test subjects. The code here uses
 this repository's GPL-3.0-only license. Review attribution/licensing before
 copying code from the legacy match tools.
+
+## Search control (stage 3)
+
+The owner thread reads commands while one scoped worker searches. Stop joins
+that worker before another search starts. EOF, quit, output errors and input
+errors stop active work. Output lines are serialized under a mutex. A fresh TT
+is allocated per search, so `new-game` cannot retain earlier scores.
+
+`SearchLimits::with_max_nodes` counts main and quiescence nodes across all
+iterations; `with_max_time` supplies a wall-clock duration. `SearchControl`
+provides cooperative stop and a movable deadline for ponder-hit. Stop and node
+checks occur at every search node; time checks occur at most every 256 nodes.
+Move generation/TT allocation can still add latency, so callers must allow a
+documented transport margin rather than expecting hard real-time behavior.
+
+An interrupted iteration never replaces a completed score/PV. If depth 1 has not
+completed, return a legal fallback with no score and depth zero. Aborted results
+propagate before ancestor TT stores. Completed subtrees may remain cached, but
+each new Hub search gets a new table. Existing unlimited-depth APIs retain their
+fixed-depth behavior and tests.
+
+Clock allocation is intentionally simple: `(time + inc) / remaining_moves * .95`,
+using 30 when moves is omitted. Increment is counted before the move. Fixed
+`move-time` uses its own deadline. Pondering defers the allocated deadline until
+`ponder-hit`; stop still completes the search. Strength tuning of this policy
+is separate from protocol correctness.
+
+The Windows CI job tests the engine, builds with the committed lockfile and
+uploads a ZIP containing the executable, GPL license, README, Hub documentation,
+source revision URL and SHA-256 checksum. This is a review build artifact;
+publishing a named release can follow the validated match stage.

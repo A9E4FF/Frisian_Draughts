@@ -1,6 +1,26 @@
 name: Rust checks
 on: [push, pull_request]
 jobs:
+  windows-engine:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Package Hub executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/frisian-draughts | Out-Null
+          Copy-Item target/release/frisian-draughts.exe,license.txt,README.md,docs/hub-testbench.md dist/frisian-draughts/
+          "Source: https://github.com/$env:GITHUB_REPOSITORY/tree/$env:GITHUB_SHA" | Set-Content dist/frisian-draughts/SOURCE.txt
+          $hash = (Get-FileHash dist/frisian-draughts/frisian-draughts.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  frisian-draughts.exe" | Set-Content dist/frisian-draughts/SHA256SUMS.txt
+          Compress-Archive -Path dist/frisian-draughts -DestinationPath dist/frisian-draughts-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frisian-draughts-windows-x64
+          path: dist/frisian-draughts-windows-x64.zip
   hub-contract:
     strategy:
       matrix:

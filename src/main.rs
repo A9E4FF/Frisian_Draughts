@@ -1,3 +1,4 @@
+mod analysis;
 use frisian_draughts::search::{search, SearchLimits};
 use frisian_draughts::{Game, Outcome, Side};
 use std::io::{self, Write};
@@ -27,6 +28,9 @@ fn engine(game: &mut Game, limits: SearchLimits) {
     }
 }
 fn main() -> io::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--analysis-json") {
+        return analysis::run(io::stdin().lock(), io::stdout().lock());
+    }
     let mut game = Game::default();
     let mut checkpoints = Vec::new();
     let mut limits = SearchLimits::default();

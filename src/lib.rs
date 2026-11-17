@@ -18,6 +18,7 @@ use std::fmt;
 
 use bitboard::{squares, SPARSE};
 mod bitboard;
+mod fen;
 #[cfg(test)]
 mod reference;
 mod tt;

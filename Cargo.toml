@@ -6,3 +6,5 @@ license = "GPL-3.0-only"
 description = "A legal-move-first Frisian draughts engine"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

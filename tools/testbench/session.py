@@ -150,7 +150,8 @@ class HubSession:
                 thread.start()
             self.send('hub')
             self._wait('wait', timeout)
-            for name, value in (parameters or {}).items():
+            selected = parameters(self) if callable(parameters) else parameters
+            for name, value in (selected or {}).items():
                 self.send('set-param', [('name', name), ('value', value)])
             self.send('init')
             self._wait('ready', timeout)
@@ -160,7 +161,7 @@ class HubSession:
             self.close()
             raise
 
-    def begin_search(self, position, *, moves=(), level=(('depth', 4),), mode='think'):
+    def begin_search(self, position, *, moves=(), level=(('depth', 4),), mode='think', restrictions=None):
         if self.state != 'ready':
             raise HubError('engine must be ready before a search')
         validate_position(position)
@@ -168,6 +169,8 @@ class HubSession:
             raise ValueError('invalid search mode')
         # Serialize everything before changing engine state on the wire.
         pairs = [('pos', position)]
+        if restrictions is not None:
+            pairs.append(('frisian-state', restrictions))
         if moves:
             pairs.append(('moves', ' '.join(moves)))
         serialize('pos', pairs)

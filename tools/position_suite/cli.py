@@ -28,7 +28,12 @@ def run_suite(args):
                 parts.append(format_event(event))
                 if args.verbose:
                     print(format_event(event), end='', flush=True)
-            outcome = AnalysisSession(args.engine).run(case, receive)
+            if args.protocol == 'hub':
+                from tools.testbench.positions import HubAnalysisSession
+                session = HubAnalysisSession(args.engine, args.referee, cwd=args.engine_cwd)
+            else:
+                session = AnalysisSession(args.engine)
+            outcome = session.run(case, receive)
             counts[outcome.status] = counts.get(outcome.status, 0) + 1
             parts.append(f'\nSTATUS: {outcome.status.upper()}\n{outcome.message}\n')
             safe = re.sub(r'[^A-Za-z0-9_-]+', '-', case['name']).strip('-') or 'position'
@@ -52,15 +57,21 @@ def main(argv=None):
     run = commands.add_parser('run', help='Run a saved suite without a GUI')
     run.add_argument('suite', type=Path)
     run.add_argument('--engine', type=Path, default=DEFAULT_ENGINE)
+    run.add_argument('--protocol', choices=['json', 'hub'], default='json')
+    run.add_argument('--referee', type=Path, help='Rust rules inspector, required for Hub engines')
+    run.add_argument('--engine-cwd', help='Hub engine working directory')
     run.add_argument('--logs', type=Path, default=Path('position-logs'))
     run.add_argument('--depth', type=int, help='Override every case depth (1–64)')
     run.add_argument('--no-tt', action='store_true', help='Run the baseline without transposition tables')
     run.add_argument('--verbose', action='store_true', help='Print live search text as well as saving logs')
     args = parser.parse_args(argv)
     if args.command == 'run':
+        if args.protocol == 'hub' and args.referee is None:
+            parser.error('--referee is required with --protocol hub')
         if args.depth is not None and not 1 <= args.depth <= 64:
             parser.error('--depth must be 1–64')
         return run_suite(args)
     from .gui import launch
     launch()
     return 0
+

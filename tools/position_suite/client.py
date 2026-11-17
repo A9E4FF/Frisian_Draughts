@@ -146,7 +146,7 @@ class AnalysisSession:
                 status = ('passed' if result.get('best_move') in accepted else 'failed') if request['accepted_moves'] else 'analysis'
                 return AnalysisOutcome(status, result)
         except (OSError, ValueError, TypeError) as exc:
-            return AnalysisOutcome('cancelled' if self._cancelled.is_set() else 'error', message=str(exc))
+            return AnalysisOutcome('cancelled' if self._cancelled.is_set() else 'error', message=f'{self.engine}: {exc}')
         finally:
             if process is not None:
                 if process.poll() is None:
@@ -161,3 +161,4 @@ class AnalysisSession:
                         pass
             with self._lock:
                 self._process = None
+

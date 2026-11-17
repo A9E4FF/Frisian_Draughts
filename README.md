@@ -1,2 +1,105 @@
-# Frisian_Draughts
-Frisian Draughts engine, written in Rust. Pure search algorithm, without Opening Books and External weights.
+# Frisian Draughts
+
+A Rust Frisian Draughts engine, using Scan 3.1 as its rules reference. This first
+version focuses on legal moves. It plays the first move in a stable legal order;
+search algorithms will follow later, without opening books or external weights.
+
+## Build and play
+
+Install stable Rust using [rustup](https://rustup.rs), then:
+
+```sh
+cargo run --release
+```
+
+You play White; Black responds automatically. Men are `w`/`b`, kings `W`/`B`.
+Empty dark squares display their standard numbers (1–50).
+
+| Command | Action |
+| --- | --- |
+| `help` | Show commands |
+| `board` | Display the current board |
+| `moves` | List legal moves, with full capture identifiers |
+| `play 31-26` | Play a quiet move |
+| `play 28x19` | Play a capture when endpoints identify it uniquely |
+| `go` | Ask the engine to play the side to move |
+| `undo` | Undo the last human move and its automatic response, or the last `go` |
+| `new` | Start a new game |
+| `quit` | Exit (EOF also exits) |
+
+When multiple captures share endpoints, use the exact identifier printed by
+`moves`, such as `49x47x7x11x19x30x42`. Numbers after the destination are the
+**captured-square set in ascending order**, not the sequence of landing squares.
+Ambiguous or illegal input leaves the game unchanged.
+
+Captures are mandatory. The engine generates complete capture sequences, retains
+only those allowed by Frisian capture priorities, then selects immediately—no
+search, timer, or artificial delay. Quiet moves are chosen the same way. Move order
+is source, destination, then lexicographic captured-square list.
+
+The rules include orthogonal captures, backward man captures, flying kings,
+end-of-move promotion, captured-piece blocking, and the king's three-quiet-move
+restriction while men remain. Loss is detected when the side to move cannot move;
+three occurrences of the same full position produce a draw. This is a Scan-based
+rules baseline, not certification of every tournament adjudication rule.
+
+## Library
+
+```rust
+use frisian_draughts::{Game, Outcome};
+
+fn main() -> Result<(), frisian_draughts::Error> {
+    let mut game = Game::default();
+    let human_move = game.position().parse_move("31-26")?;
+    game.play(&human_move)?;
+    if let Some(reply) = game.choose_move() {
+        game.play(&reply)?;
+    }
+    assert_eq!(game.outcome(), Outcome::Ongoing);
+    Ok(())
+}
+```
+
+`Position` owns piece masks, side to move, and king restrictions. Its checked
+constructor accepts `(Square, Side, Piece)` entries plus restriction states ordered
+White/Black. `Position::legal_moves`, `parse_move`, and `apply` enforce legality;
+`Game` additionally tracks repetition, game outcome, and undo. `Game::choose_move`
+returns `None` when the game is over. Positions alone contain no repetition history.
+No unsafe Rust or runtime dependencies are used. Geometry is coordinate-based;
+bitboards retain Scan's padded 63-index mapping. See the [initial analysis](docs/scan-rust-analysis.md)
+for future search work.
+
+## Validation
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+Tests cover capture priority, orthogonal chains, promotion, blocked victims,
+return-to-origin captures, ambiguous endpoints, restriction state, undo,
+repetition, illegal input, terminal automation, and reproducible playouts.
+
+An optional differential harness compiles a small adapter against the original
+Scan source (requires Python 3 and g++):
+
+```sh
+git clone https://github.com/A9E4FF/scan.git /tmp/scan-reference
+git -C /tmp/scan-reference checkout 7aae17e7b7bfc47744601afb1ee7655e18983ce5
+python3 tools/differential.py /tmp/scan-reference
+```
+
+It compares complete resulting positions, king restriction counters, and legal
+move sets on curated cases and seeded playouts, with no book, weights, or bitbase
+loading. The initial run matched **5,407 states**, including **1,974 capture
+positions** and **507 king-restriction states** (seed 3101). CI runs the same checks. The reference source and binaries are not vendored.
+
+## Attribution and license
+
+Rule behavior and padded board representation are adapted from **Scan 3.1**,
+Copyright (C) 2015–2019 **Fabien Letouzey**, distributed under GNU GPL version 3.
+Reference revision: `7aae17e7b7bfc47744601afb1ee7655e18983ce5` in
+[A9E4FF/scan](https://github.com/A9E4FF/scan).
+The Rust implementation and validation adapters are distributed under **GPL-3.0-only**;
+see [license.txt](license.txt). No opening books or evaluation weight files are included.

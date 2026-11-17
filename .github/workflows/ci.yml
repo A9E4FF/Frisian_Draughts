@@ -1,0 +1,18 @@
+name: Rust checks
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - name: Fetch pinned Scan reference
+        run: |
+          git clone https://github.com/A9E4FF/scan.git "$RUNNER_TEMP/scan"
+          git -C "$RUNNER_TEMP/scan" checkout 7aae17e7b7bfc47744601afb1ee7655e18983ce5
+      - run: python3 tools/differential.py "$RUNNER_TEMP/scan"

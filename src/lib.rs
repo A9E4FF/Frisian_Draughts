@@ -16,21 +16,10 @@ pub mod search;
 
 use std::fmt;
 
-const SQUARES: [u8; 50] = [
-    0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 26, 27, 28, 29, 30, 32,
-    33, 34, 35, 36, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49, 52, 53, 54, 55, 56, 58, 59, 60, 61, 62,
-];
-const DIAG: [(i8, i8); 4] = [(-1, -1), (-1, 1), (1, -1), (1, 1)];
-const CAP_DIRS: [(i8, i8); 8] = [
-    (-1, -1),
-    (-1, 1),
-    (1, -1),
-    (1, 1),
-    (-2, 0),
-    (2, 0),
-    (0, -2),
-    (0, 2),
-];
+use bitboard::{squares, SPARSE};
+mod bitboard;
+#[cfg(test)]
+mod reference;
 
 /// Standard square numbering, 1 through 50.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -47,7 +36,10 @@ impl Square {
         self.0
     }
     fn bit(self) -> u64 {
-        1 << SQUARES[(self.0 - 1) as usize]
+        1 << self.index()
+    }
+    fn index(self) -> usize {
+        SPARSE[(self.0 - 1) as usize] as usize
     }
     fn coords(self) -> (i8, i8) {
         let row = (self.0 - 1) / 5;
@@ -135,10 +127,6 @@ impl fmt::Display for Move {
         Ok(())
     }
 }
-fn squares(bits: u64) -> impl Iterator<Item = Square> {
-    (1..=50).map(Square).filter(move |s| bits & s.bit() != 0)
-}
-
 /// The king tracked by the Frisian three-quiet-move restriction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KingRestriction {
@@ -243,44 +231,66 @@ impl Position {
         self.men[0] | self.men[1] | self.kings[0] | self.kings[1]
     }
     pub fn legal_moves(&self) -> Vec<Move> {
+        #[cfg(test)]
+        if reference::enabled() {
+            return self.legal_moves_reference();
+        }
+        let g = bitboard::geometry();
         let i = self.turn.index();
+        let j = self.turn.other().index();
+        let empty = bitboard::PLAYABLE & !self.occupied();
+        let enemy = self.men[j] | self.kings[j];
         let mut captures = Vec::new();
-        for from in squares(self.men[i] | self.kings[i]) {
-            let king = self.kings[i] & from.bit() != 0;
-            self.capture_rec(from, from, king, 0, &mut captures);
+        // Find all men with an adjacent victim and an empty landing in parallel.
+        for (d, &reverse) in bitboard::OPPOSITE.iter().enumerate() {
+            let froms = self.men[i]
+                & bitboard::shift(enemy, reverse)
+                & bitboard::shift(bitboard::shift(empty, reverse), reverse);
+            for from in squares(froms) {
+                let (jump, to) = g.man_jumps[from.index()][d].expect("validated capture geometry");
+                self.capture_bits(
+                    from,
+                    Square(bitboard::STANDARD[to as usize]),
+                    false,
+                    1u64 << jump,
+                    &mut captures,
+                );
+            }
+        }
+        for from in squares(self.kings[i]) {
+            self.capture_bits(from, from, true, 0, &mut captures);
         }
         let mut moves = if captures.is_empty() {
             let mut quiet = Vec::new();
-            for from in squares(self.men[i] | self.kings[i]) {
-                let king = self.kings[i] & from.bit() != 0;
-                if king && self.restrictions[i].is_some_and(|r| r.square == from && r.count == 3) {
+            let directions = if self.turn == Side::White { 0..2 } else { 2..4 };
+            for d in directions {
+                let froms = self.men[i] & bitboard::shift(empty, bitboard::OPPOSITE[d]);
+                for from in squares(froms) {
+                    let to = Square(bitboard::STANDARD[g.next[from.index()][d] as usize]);
+                    quiet.push(Move {
+                        from,
+                        to,
+                        captured: 0,
+                    });
+                }
+            }
+            for from in squares(self.kings[i]) {
+                if self.restrictions[i].is_some_and(|r| r.square == from && r.count == 3) {
                     continue;
                 }
-                for d in DIAG {
-                    if !king && d.0 != if self.turn == Side::White { -1 } else { 1 } {
-                        continue;
-                    }
-                    let mut next = from.step(d);
-                    while let Some(to) = next {
-                        if self.occupied() & to.bit() != 0 {
-                            break;
-                        }
-                        quiet.push(Move {
-                            from,
-                            to,
-                            captured: 0,
-                        });
-                        if !king {
-                            break;
-                        }
-                        next = to.step(d);
-                    }
+                let targets =
+                    g.attack(from.index(), g.king_moves[from.index()], self.occupied()) & empty;
+                for to in squares(targets) {
+                    quiet.push(Move {
+                        from,
+                        to,
+                        captured: 0,
+                    });
                 }
             }
             quiet
         } else {
             let score = |m: &Move| {
-                let j = self.turn.other().index();
                 64 * (m.captured & self.men[j]).count_ones()
                     + 126 * (m.captured & self.kings[j]).count_ones()
                     + u32::from(self.kings[i] & m.from.bit() != 0)
@@ -293,7 +303,7 @@ impl Position {
         moves.dedup();
         moves
     }
-    fn capture_rec(
+    fn capture_bits(
         &self,
         start: Square,
         from: Square,
@@ -301,35 +311,37 @@ impl Position {
         captured: u64,
         out: &mut Vec<Move>,
     ) {
-        // Jumped pieces remain blockers until the complete move ends.
+        let g = bitboard::geometry();
+        // Captured victims are excluded from future captures but remain blockers.
         let blockers = self.occupied() & !start.bit();
-        let enemy = (self.men[self.turn.other().index()] | self.kings[self.turn.other().index()])
-            & !captured;
+        let empty = bitboard::PLAYABLE & !blockers;
+        let j = self.turn.other().index();
+        let enemy = (self.men[j] | self.kings[j]) & !captured;
         let mut extended = false;
-        for d in CAP_DIRS {
-            let mut next = from.step(d);
-            while let Some(jump) = next {
-                if blockers & jump.bit() != 0 {
-                    if enemy & jump.bit() != 0 {
-                        let mut land = jump.step(d);
-                        while let Some(to) = land {
-                            if blockers & to.bit() != 0 {
-                                break;
-                            }
-                            extended = true;
-                            self.capture_rec(start, to, king, captured | jump.bit(), out);
-                            if !king {
-                                break;
-                            }
-                            land = to.step(d);
-                        }
-                    }
-                    break;
+        if king {
+            for jump in squares(g.king_targets[from.index()] & enemy) {
+                if g.capture_path[from.index()][jump.index()] & !empty != 0 {
+                    continue;
                 }
-                if !king {
-                    break;
+                let d = g.direction[from.index()][jump.index()];
+                let targets = g.attack(jump.index(), g.rays[jump.index()][d], blockers) & empty;
+                for to in squares(targets) {
+                    extended = true;
+                    self.capture_bits(start, to, true, captured | jump.bit(), out);
                 }
-                next = jump.step(d);
+            }
+        } else {
+            for &(jump, to) in g.man_jumps[from.index()].iter().flatten() {
+                if enemy & (1u64 << jump) != 0 && empty & (1u64 << to) != 0 {
+                    extended = true;
+                    self.capture_bits(
+                        start,
+                        Square(bitboard::STANDARD[to as usize]),
+                        false,
+                        captured | (1u64 << jump),
+                        out,
+                    );
+                }
             }
         }
         if !extended && captured != 0 {
@@ -432,7 +444,7 @@ impl Position {
     }
 }
 fn promotion(sq: Square, side: Side) -> bool {
-    sq.coords().0 == if side == Side::White { 0 } else { 9 }
+    sq.bit() & bitboard::PROMOTION[side.index()] != 0
 }
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

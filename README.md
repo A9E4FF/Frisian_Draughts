@@ -74,8 +74,11 @@ new opponent. Search returns a move, side-to-move score, principal variation,
 completed depth, total/quiescence node counts, and elapsed time without changing
 the game. A sole legal move has no searched score and completed depth zero;
 terminal games have no selected move. Positions alone contain no repetition history.
-No unsafe Rust or runtime dependencies are used. Geometry is coordinate-based;
-bitboards retain Scan's padded 63-index mapping. See the [initial analysis](docs/scan-rust-analysis.md)
+No unsafe Rust or runtime dependencies are used. Bitboards retain Scan's padded
+63-index mapping. Man candidates use masked shifts; king moves and captures use
+precomputed rays and capture-path masks initialized once. Set-bit iteration and
+region population counts avoid scanning empty squares. The coordinate generator
+and evaluator remain available only in tests as independent references. See the [initial analysis](docs/scan-rust-analysis.md)
 for future search work.
 
 ## Search behavior
@@ -129,8 +132,24 @@ python3 tools/differential.py /tmp/scan-reference
 
 It compares complete resulting positions, king restriction counters, and legal
 move sets on curated cases and seeded playouts, with no book, weights, or bitbase
-loading. The initial run matched **5,407 states**, including **1,974 capture
-positions** and **507 king-restriction states** (seed 3101). CI runs the same checks. The reference source and binaries are not vendored.
+loading. The expanded run matched **5,758 states**, including **1,991 capture
+positions** and **526 king-restriction states** (seed 3101). CI runs the same checks. The reference source and binaries are not vendored.
+
+### Bitboard regression and performance comparison
+
+```sh
+python3 tools/benchmark_bitboards.py --output /tmp/bitboard-results.json
+cargo run --release --example movegen_bench
+```
+
+The comparison script builds an isolated archive of the pre-bitboard baseline,
+runs both implementations three times, and requires identical moves, scores,
+full principal variations, completed depths, and node counts at depths 4/6/8/10.
+It also compares a seeded move-generation corpus and checksum. The coordinate
+reference, geometry checks, and seeded full-state comparisons run under
+`cargo test`; normal builds contain no reference generator or runtime switch.
+See [bitboard benchmark results](docs/bitboard-benchmarks.md). Search policy,
+evaluation values, public APIs, and terminal commands are unchanged.
 
 ## Attribution and license
 

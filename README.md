@@ -1,8 +1,8 @@
 # Frisian Draughts
 
-A Rust Frisian Draughts engine, using Scan 3.1 as its rules reference. This first
-version focuses on legal moves. It plays the first move in a stable legal order;
-search algorithms will follow later, without opening books or external weights.
+A Rust Frisian Draughts engine using Scan 3.1 as its rules and search reference.
+The terminal opponent uses iterative-deepening alpha-beta with capture quiescence
+and a small edge-aware evaluator. No opening books or external weights are used.
 
 ## Build and play
 
@@ -23,6 +23,7 @@ Empty dark squares display their standard numbers (1–50).
 | `play 31-26` | Play a quiet move |
 | `play 28x19` | Play a capture when endpoints identify it uniquely |
 | `go` | Ask the engine to play the side to move |
+| `depth 10` | Set search depth (1–64; default 10) |
 | `undo` | Undo the last human move and its automatic response, or the last `go` |
 | `new` | Start a new game |
 | `quit` | Exit (EOF also exits) |
@@ -33,9 +34,10 @@ When multiple captures share endpoints, use the exact identifier printed by
 Ambiguous or illegal input leaves the game unchanged.
 
 Captures are mandatory. The engine generates complete capture sequences, retains
-only those allowed by Frisian capture priorities, then selects immediately—no
-search, timer, or artificial delay. Quiet moves are chosen the same way. Move order
-is source, destination, then lexicographic captured-square list.
+only those allowed by Frisian capture priorities, and searches competing choices.
+A sole legal move is played immediately, without a searched score. Quiet positions
+are searched too. Legal moves are ordered by source, destination, then captured
+squares; search tries the preceding iteration’s principal variation first.
 
 The rules include orthogonal captures, backward man captures, flying kings,
 end-of-move promotion, captured-piece blocking, and the king's three-quiet-move
@@ -47,12 +49,14 @@ rules baseline, not certification of every tournament adjudication rule.
 
 ```rust
 use frisian_draughts::{Game, Outcome};
+use frisian_draughts::search::{search, SearchLimits};
 
 fn main() -> Result<(), frisian_draughts::Error> {
     let mut game = Game::default();
     let human_move = game.position().parse_move("31-26")?;
     game.play(&human_move)?;
-    if let Some(reply) = game.choose_move() {
+    let result = search(&game, SearchLimits::new(4)?);
+    if let Some(reply) = result.best_move {
         game.play(&reply)?;
     }
     assert_eq!(game.outcome(), Outcome::Ongoing);
@@ -64,10 +68,41 @@ fn main() -> Result<(), frisian_draughts::Error> {
 constructor accepts `(Square, Side, Piece)` entries plus restriction states ordered
 White/Black. `Position::legal_moves`, `parse_move`, and `apply` enforce legality;
 `Game` additionally tracks repetition, game outcome, and undo. `Game::choose_move`
-returns `None` when the game is over. Positions alone contain no repetition history.
+returns `None` when the game is over. These existing `choose_move` methods retain
+the original deterministic first-move behavior. Use `search(&game, limits)` for the
+new opponent. Search returns a move, side-to-move score, principal variation,
+completed depth, total/quiescence node counts, and elapsed time without changing
+the game. A sole legal move has no searched score and completed depth zero;
+terminal games have no selected move. Positions alone contain no repetition history.
 No unsafe Rust or runtime dependencies are used. Geometry is coordinate-based;
 bitboards retain Scan's padded 63-index mapping. See the [initial analysis](docs/scan-rust-analysis.md)
 for future search work.
+
+## Search behavior
+
+The default depth is **10 plies** (roughly five moves per side). A complete
+multi-capture sequence counts as one ply. At the horizon, all mandatory capture
+choices are searched until reaching a quiet position; stand pat is never allowed
+instead of a capture. Wins favor shorter lines; losses favor longer lines.
+Threefold repetition includes both game history and the current search path,
+with king restriction state participating in position identity.
+
+The evaluator starts with men = 100, kings = 300, men on outer side files = +8,
+and men on the adjacent files = +4. Tracked king quiet-move counts 1/2/3 cost
+2/6/12 points. These are provisional values, not Scan’s learned weights. Tactical
+search takes precedence over the edge preference; kings receive no edge bonus.
+
+Search is single-threaded, with no transposition table, reductions, forward
+pruning, or hidden time limit. Depth 10 can take noticeable time. For quicker
+responses, enter `depth 4` or `depth 6`. `new` and `undo` retain the depth setting;
+invalid settings leave it unchanged. Terminal statistics include quiescence nodes
+and work from all iterative-deepening passes. An immediate sole-move selection
+is explicitly marked as unsearched.
+
+Capture quiescence resolves exchanges beyond the nominal horizon; it does not
+promise to see consequences 10–15 full moves away. See the
+[benchmark record](docs/search-benchmarks.md) for measured examples and the
+[initial analysis](docs/scan-rust-analysis.md) for later search improvements.
 
 ## Validation
 
@@ -79,7 +114,9 @@ cargo test
 
 Tests cover capture priority, orthogonal chains, promotion, blocked victims,
 return-to-origin captures, ambiguous endpoints, restriction state, undo,
-repetition, illegal input, terminal automation, and reproducible playouts.
+repetition, illegal input, terminal automation, and reproducible playouts. Search
+tests compare alpha-beta with exhaustive minimax, replay principal variations,
+check quiet sacrifices and forced exchanges, and reject a losing edge move.
 
 An optional differential harness compiles a small adapter against the original
 Scan source (requires Python 3 and g++):

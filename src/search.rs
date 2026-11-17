@@ -1,6 +1,6 @@
 //! Fixed-depth, single-threaded alpha-beta with mandatory-capture quiescence.
 //! Search design follows Scan 3.1 (Fabien Letouzey); GPL-3.0-only.
-use crate::{squares, Error, Game, Move, Position, Side};
+use crate::{bitboard, Error, Game, Move, Position, Side};
 use std::time::{Duration, Instant};
 
 const MATE: i32 = 30_000;
@@ -46,19 +46,17 @@ pub struct SearchResult {
 /// Provisional, symmetric material/edge evaluator, from the side to move.
 /// Edge bonuses apply only to men; capture-priority weights are not material values.
 pub fn evaluate(position: &Position) -> i32 {
+    #[cfg(test)]
+    if crate::reference::enabled() {
+        return crate::reference::evaluate(position);
+    }
     let mut white = 0;
     for side in [Side::White, Side::Black] {
         let i = side.index();
         let mut value =
             position.men[i].count_ones() as i32 * 100 + position.kings[i].count_ones() as i32 * 300;
-        for sq in squares(position.men[i]) {
-            let (_, file) = sq.coords();
-            value += match file.min(9 - file) {
-                0 => 8,
-                1 => 4,
-                _ => 0,
-            };
-        }
+        value += 8 * (position.men[i] & bitboard::OUTER_FILES).count_ones() as i32
+            + 4 * (position.men[i] & bitboard::ADJACENT_FILES).count_ones() as i32;
         if let Some(restriction) = position.restrictions[i] {
             value -= [0, 2, 6, 12][restriction.count as usize];
         }

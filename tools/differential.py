@@ -71,6 +71,11 @@ with tempfile.TemporaryDirectory() as tmp:
                 pc = side.upper() if rng.randrange(2) or (side == 'w' and sq <= 5) or (side == 'b' and sq >= 46) else side
                 pcs.append((sq,pc))
             fixtures.append(board(pcs, rng.choice('WB')))
+        # Every possible king origin, including all board boundaries, and the
+        # mixed king/man search fixture. Position-only adapters permit replay
+        # past repetition, intentionally exercising ray geometry for 100 plies.
+        fixtures += [board([(n, 'W'), (51-n, 'B')]) for n in range(1,51)]
+        fixtures += [board([(1,'W'),(46,'w'),(5,'B'),(20,'b')])]
         fixtures += [fixtures[0]] * 40
         for fixture in fixtures:
             moves = compare('new ' + fixture)

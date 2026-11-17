@@ -58,7 +58,7 @@ fn main() {
         ),
     ];
     let args: Vec<_> = std::env::args().skip(1).collect();
-    println!("position,depth,completed_depth,nodes,quiescence_nodes,seconds,score,move");
+    println!("position,depth,completed_depth,nodes,quiescence_nodes,seconds,score,move,pv");
     for (name, game) in fixtures {
         if args.first().is_some_and(|filter| filter != name) {
             continue;
@@ -66,13 +66,18 @@ fn main() {
         for depth in [4, 6, 8, 10] {
             let r = search(&game, SearchLimits::new(depth).unwrap());
             println!(
-                "{name},{depth},{},{},{},{:.6},{},{}",
+                "{name},{depth},{},{},{},{:.6},{},{},{}",
                 r.completed_depth,
                 r.nodes,
                 r.quiescence_nodes,
                 r.elapsed.as_secs_f64(),
                 r.score.map_or("unsearched".into(), |s| s.to_string()),
-                r.best_move.map_or("none".into(), |mv| mv.to_string())
+                r.best_move.map_or("none".into(), |mv| mv.to_string()),
+                r.principal_variation
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
             );
         }
     }

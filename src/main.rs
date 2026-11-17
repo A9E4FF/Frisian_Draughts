@@ -28,6 +28,9 @@ fn engine(game: &mut Game, limits: SearchLimits) {
     }
 }
 fn main() -> io::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("hub") {
+        return frisian_draughts::hub::run(io::BufReader::new(io::stdin()), io::stdout());
+    }
     if std::env::args().nth(1).as_deref() == Some("--analysis-json") {
         return analysis::run(io::stdin().lock(), io::stdout().lock());
     }

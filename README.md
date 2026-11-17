@@ -165,7 +165,10 @@ mode is separate from human terminal output and flushes every completed depth.
 
 The headless [Hub testbench foundation](docs/hub-testbench.md) provides a Hub v2
 codec, subprocess session, Scan fixtures, and fake-engine compatibility tests.
-It is separate from engine search; the Rust executable does not yet expose Hub.
+Launch `frisian-draughts hub` for the initial depth-only Hub adapter. It supports
+initialization, board/history loading, depth-limited think/analyze searches,
+progressive information and completion output. Search is currently blocking:
+time/node limits, stop/ping during search and pondering arrive in stage 3.
 
 ```sh
 python3 -m unittest discover -s tools/testbench/tests -v

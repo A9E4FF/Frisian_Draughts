@@ -12,6 +12,7 @@
 //! assert_eq!(game.outcome(), Outcome::Ongoing);
 //! # Ok::<(), frisian_draughts::Error>(())
 //! ```
+pub mod hub;
 pub mod search;
 
 use std::fmt;

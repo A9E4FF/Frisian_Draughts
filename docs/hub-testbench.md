@@ -1,8 +1,12 @@
-# Hub testbench: stage 1
+# Hub testbench
 
 The new `tools.testbench` package establishes a GUI-independent Hub v2 contract
 before changing the engine. Existing terminal play, Rust search, and
-`--analysis-json` remain unchanged. This stage does **not** add Hub mode to Rust.
+`--analysis-json` remain unchanged. Stage 2 adds `frisian-draughts hub` with
+depth-only synchronous searches. Until stage 3, do not use time/node controls,
+infinite analysis, pondering or expect stop/ping to interrupt an active search.
+Unsupported limit/search modes produce explicit protocol errors. `pos start` is
+accepted for compatibility with the supplied GUI in addition to standard boards.
 
 ## Run
 

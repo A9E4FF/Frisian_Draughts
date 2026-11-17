@@ -1,0 +1,167 @@
+{
+  "protocol": "Hub v2",
+  "executable_sha256": "526fe8c1bcca3d9f9c1647b570ff4fe6d8709380fff342c501f80ed8ed87cd8e",
+  "arguments": [
+    "hub"
+  ],
+  "depth": 2,
+  "passed": true,
+  "move": "31-27",
+  "events": [
+    {
+      "seconds": 0.007794799981638789,
+      "direction": "stdin",
+      "line": "hub"
+    },
+    {
+      "seconds": 0.11876340000890195,
+      "direction": "stdout",
+      "line": "id name=Scan version=3.1 author=\"Fabien Letouzey\" country=France"
+    },
+    {
+      "seconds": 0.11879740003496408,
+      "direction": "stdout",
+      "line": "param name=variant value=normal type=enum values=\"normal killer bt frisian losing\""
+    },
+    {
+      "seconds": 0.11880200006999075,
+      "direction": "stdout",
+      "line": "param name=book value=true type=bool"
+    },
+    {
+      "seconds": 0.11880509997718036,
+      "direction": "stdout",
+      "line": "param name=book-ply value=4 type=int min=0 max=20"
+    },
+    {
+      "seconds": 0.11880729999393225,
+      "direction": "stdout",
+      "line": "param name=book-margin value=4 type=int min=0 max=100"
+    },
+    {
+      "seconds": 0.11880920000839978,
+      "direction": "stdout",
+      "line": "param name=ponder value=false type=bool"
+    },
+    {
+      "seconds": 0.11881100002210587,
+      "direction": "stdout",
+      "line": "param name=threads value=1 type=int min=1 max=16"
+    },
+    {
+      "seconds": 0.11881260003428906,
+      "direction": "stdout",
+      "line": "param name=tt-size value=24 type=int min=16 max=30"
+    },
+    {
+      "seconds": 0.1188195999711752,
+      "direction": "stdout",
+      "line": "param name=bb-size value=0 type=int min=0 max=7"
+    },
+    {
+      "seconds": 0.11882209999021143,
+      "direction": "stdout",
+      "line": "wait"
+    },
+    {
+      "seconds": 0.11915130005218089,
+      "direction": "stdin",
+      "line": "set-param name=variant value=frisian"
+    },
+    {
+      "seconds": 0.11917259998153895,
+      "direction": "stdin",
+      "line": "set-param name=book value=false"
+    },
+    {
+      "seconds": 0.11918170005083084,
+      "direction": "stdin",
+      "line": "set-param name=bb-size value=0"
+    },
+    {
+      "seconds": 0.11919660004787147,
+      "direction": "stdin",
+      "line": "set-param name=threads value=1"
+    },
+    {
+      "seconds": 0.11920389998704195,
+      "direction": "stdin",
+      "line": "init"
+    },
+    {
+      "seconds": 0.11935160006396472,
+      "direction": "stdout",
+      "line": "init eval"
+    },
+    {
+      "seconds": 0.23994570004288107,
+      "direction": "stdout",
+      "line": "ready"
+    },
+    {
+      "seconds": 0.24004389997571707,
+      "direction": "stdin",
+      "line": "ping"
+    },
+    {
+      "seconds": 0.24009460001252592,
+      "direction": "stdout",
+      "line": "pong"
+    },
+    {
+      "seconds": 0.24013529997318983,
+      "direction": "stdin",
+      "line": "pos pos=Wbbbbbbbbbbbbbbbbbbbbeeeeeeeeeewwwwwwwwwwwwwwwwwwww"
+    },
+    {
+      "seconds": 0.240147800068371,
+      "direction": "stdin",
+      "line": "level depth=2"
+    },
+    {
+      "seconds": 0.2401524999877438,
+      "direction": "stdin",
+      "line": "go think"
+    },
+    {
+      "seconds": 0.24048889998812228,
+      "direction": "stdout",
+      "line": "info depth=1 mean-depth=11.1 score=-0.36 nodes=26 pv=31-27"
+    },
+    {
+      "seconds": 0.24050119996536523,
+      "direction": "stdout",
+      "line": "info depth=1 mean-depth=8.3 score=-0.32 nodes=65 pv=34-30"
+    },
+    {
+      "seconds": 0.2406479000346735,
+      "direction": "stdout",
+      "line": "info depth=2 mean-depth=10.0 score=-0.55 nodes=493 pv=\"34-30 20-25 33-28 25x34x30 35x33x34\""
+    },
+    {
+      "seconds": 0.24073129997123033,
+      "direction": "stdout",
+      "line": "info depth=2 mean-depth=9.6 score=-0.06 nodes=662 pv=\"31-27 17-21\""
+    },
+    {
+      "seconds": 0.2407847000285983,
+      "direction": "stdout",
+      "line": "done move=31-27 ponder=17-21"
+    },
+    {
+      "seconds": 0.2408489000517875,
+      "direction": "stdin",
+      "line": "ping"
+    },
+    {
+      "seconds": 0.2408848999766633,
+      "direction": "stdout",
+      "line": "pong"
+    },
+    {
+      "seconds": 0.24092060001567006,
+      "direction": "stdin",
+      "line": "quit"
+    }
+  ]
+}

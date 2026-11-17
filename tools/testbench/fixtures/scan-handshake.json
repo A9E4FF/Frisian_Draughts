@@ -1,0 +1,112 @@
+{
+  "protocol": "Hub v2",
+  "source": "Local ScanGraphic Scan 3.1 executable; custom extensions may be present",
+  "executable_sha256": "526fe8c1bcca3d9f9c1647b570ff4fe6d8709380fff342c501f80ed8ed87cd8e",
+  "events": [
+    {
+      "seconds": 0.004918199963867664,
+      "direction": "stdin",
+      "line": "hub"
+    },
+    {
+      "seconds": 0.11722270003519952,
+      "direction": "stdout",
+      "line": "id name=Scan version=3.1 author=\"Fabien Letouzey\" country=France"
+    },
+    {
+      "seconds": 0.11725420004222542,
+      "direction": "stdout",
+      "line": "param name=variant value=normal type=enum values=\"normal killer bt frisian losing\""
+    },
+    {
+      "seconds": 0.11725849995855242,
+      "direction": "stdout",
+      "line": "param name=book value=true type=bool"
+    },
+    {
+      "seconds": 0.11726279999129474,
+      "direction": "stdout",
+      "line": "param name=book-ply value=4 type=int min=0 max=20"
+    },
+    {
+      "seconds": 0.11726540001109242,
+      "direction": "stdout",
+      "line": "param name=book-margin value=4 type=int min=0 max=100"
+    },
+    {
+      "seconds": 0.11726730002555996,
+      "direction": "stdout",
+      "line": "param name=ponder value=false type=bool"
+    },
+    {
+      "seconds": 0.11726870003622025,
+      "direction": "stdout",
+      "line": "param name=threads value=1 type=int min=1 max=16"
+    },
+    {
+      "seconds": 0.1172700000461191,
+      "direction": "stdout",
+      "line": "param name=tt-size value=24 type=int min=16 max=30"
+    },
+    {
+      "seconds": 0.11727139994036406,
+      "direction": "stdout",
+      "line": "param name=bb-size value=0 type=int min=0 max=7"
+    },
+    {
+      "seconds": 0.1172728999517858,
+      "direction": "stdout",
+      "line": "wait"
+    },
+    {
+      "seconds": 0.1175601000431925,
+      "direction": "stdin",
+      "line": "set-param name=variant value=frisian"
+    },
+    {
+      "seconds": 0.11757709993980825,
+      "direction": "stdin",
+      "line": "set-param name=book value=false"
+    },
+    {
+      "seconds": 0.11758570000529289,
+      "direction": "stdin",
+      "line": "set-param name=bb-size value=0"
+    },
+    {
+      "seconds": 0.11759419995360076,
+      "direction": "stdin",
+      "line": "set-param name=threads value=1"
+    },
+    {
+      "seconds": 0.11759739997796714,
+      "direction": "stdin",
+      "line": "init"
+    },
+    {
+      "seconds": 0.11770169995725155,
+      "direction": "stdout",
+      "line": "init eval"
+    },
+    {
+      "seconds": 0.240268399938941,
+      "direction": "stdout",
+      "line": "ready"
+    },
+    {
+      "seconds": 0.24034130002837628,
+      "direction": "stdin",
+      "line": "ping"
+    },
+    {
+      "seconds": 0.24039349996019155,
+      "direction": "stdout",
+      "line": "pong"
+    },
+    {
+      "seconds": 0.24047089996747673,
+      "direction": "stdin",
+      "line": "quit"
+    }
+  ]
+}

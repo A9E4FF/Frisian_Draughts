@@ -95,8 +95,8 @@ and men on the adjacent files = +4. Tracked king quiet-move counts 1/2/3 cost
 2/6/12 points. These are provisional values, not Scan’s learned weights. Tactical
 search takes precedence over the edge preference; kings receive no edge bonus.
 
-Search is single-threaded, with no transposition table, reductions, forward
-pruning, or hidden time limit. Depth 10 can take noticeable time. For quicker
+Search is single-threaded and uses a bounded 16 MiB transposition table per search.
+There are no reductions, forward pruning, or hidden time limits. Depth 10 can take noticeable time. For quicker
 responses, enter `depth 4` or `depth 6`. `new` and `undo` retain the depth setting;
 invalid settings leave it unchanged. Terminal statistics include quiescence nodes
 and work from all iterative-deepening passes. An immediate sole-move selection
@@ -106,6 +106,24 @@ Capture quiescence resolves exchanges beyond the nominal horizon; it does not
 promise to see consequences 10–15 full moves away. See the
 [benchmark record](docs/search-benchmarks.md) for measured examples and the
 [initial analysis](docs/scan-rust-analysis.md) for later search improvements.
+
+## Transposition tables
+
+Each search shares a bounded table across iterative-deepening passes. Keys cover
+pieces, side to move, and king restrictions, and full positions are checked to
+reject hash collisions. Score reuse is conservative: equal remaining depth and
+clean repetition contexts are required. Reversible king-history nodes use cached
+moves only for ordering. Terminal-distance scores and replayable PVs are retained.
+
+`SearchLimits::with_tt_enabled(false)` selects the uncached baseline;
+`with_tt_megabytes(n)` accepts 1–256 MiB (default 16). Tables are fresh per search.
+`search_with_reporter(game, limits, callback)` reports every completed iteration,
+including cumulative `tt_probes`, `tt_hits`, and `tt_cutoffs`. The existing `search`
+API remains available. See [TT behavior and benchmarks](docs/transposition-tables.md).
+
+```sh
+cargo run --release --example tt_bench
+```
 
 ## Validation
 
@@ -148,8 +166,8 @@ full principal variations, completed depths, and node counts at depths 4/6/8/10.
 It also compares a seeded move-generation corpus and checksum. The coordinate
 reference, geometry checks, and seeded full-state comparisons run under
 `cargo test`; normal builds contain no reference generator or runtime switch.
-See [bitboard benchmark results](docs/bitboard-benchmarks.md). Search policy,
-evaluation values, public APIs, and terminal commands are unchanged.
+See [bitboard benchmark results](docs/bitboard-benchmarks.md). The bitboard optimization preserved search policy, evaluation values, and terminal
+commands. Historical bitboard comparisons explicitly disable the newer TT.
 
 ## Attribution and license
 

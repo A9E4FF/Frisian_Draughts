@@ -1,6 +1,6 @@
 //! Fixed-depth, single-threaded alpha-beta with mandatory-capture quiescence.
 //! Search design follows Scan 3.1 (Fabien Letouzey); GPL-3.0-only.
-use crate::{bitboard, Error, Game, Move, Position, Side};
+use crate::{bitboard, tt, Error, Game, Move, Position, Side};
 use std::time::{Duration, Instant};
 
 const MATE: i32 = 30_000;
@@ -10,22 +10,48 @@ const INF: i32 = 32_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchLimits {
     max_depth: u8,
+    tt_enabled: bool,
+    tt_megabytes: usize,
 }
 impl Default for SearchLimits {
     fn default() -> Self {
-        Self { max_depth: 10 }
+        Self {
+            max_depth: 10,
+            tt_enabled: true,
+            tt_megabytes: 16,
+        }
     }
 }
 impl SearchLimits {
     pub fn new(max_depth: u8) -> Result<Self, Error> {
         if (1..=64).contains(&max_depth) {
-            Ok(Self { max_depth })
+            Ok(Self {
+                max_depth,
+                ..Self::default()
+            })
         } else {
             Err(Error("depth must be 1–64".into()))
         }
     }
     pub fn max_depth(self) -> u8 {
         self.max_depth
+    }
+    pub fn with_tt_enabled(mut self, enabled: bool) -> Self {
+        self.tt_enabled = enabled;
+        self
+    }
+    pub fn tt_enabled(self) -> bool {
+        self.tt_enabled
+    }
+    pub fn with_tt_megabytes(mut self, megabytes: usize) -> Result<Self, Error> {
+        if !(1..=256).contains(&megabytes) {
+            return Err(Error("TT memory must be 1–256 MiB".into()));
+        }
+        self.tt_megabytes = megabytes;
+        Ok(self)
+    }
+    pub fn tt_megabytes(self) -> usize {
+        self.tt_megabytes
     }
 }
 
@@ -41,6 +67,9 @@ pub struct SearchResult {
     pub nodes: u64,
     pub quiescence_nodes: u64,
     pub elapsed: Duration,
+    pub tt_probes: u64,
+    pub tt_hits: u64,
+    pub tt_cutoffs: u64,
 }
 
 /// Provisional, symmetric material/edge evaluator, from the side to move.
@@ -72,6 +101,16 @@ pub fn evaluate(position: &Position) -> i32 {
 /// Search without mutating the game. There is deliberately no hidden time limit.
 /// Competing captures are searched; a single legal move is returned immediately.
 pub fn search(game: &Game, limits: SearchLimits) -> SearchResult {
+    search_with_reporter(game, limits, |_| {})
+}
+
+/// Reports each completed depth, or once for a terminal/sole-move fast path.
+/// The callback runs synchronously and receives cumulative counters.
+pub fn search_with_reporter(
+    game: &Game,
+    limits: SearchLimits,
+    mut reporter: impl FnMut(&SearchResult),
+) -> SearchResult {
     let start = Instant::now();
     let position = *game.position();
     let moves = position.legal_moves();
@@ -83,6 +122,9 @@ pub fn search(game: &Game, limits: SearchLimits) -> SearchResult {
         nodes: 0,
         quiescence_nodes: 0,
         elapsed: Duration::ZERO,
+        tt_probes: 0,
+        tt_hits: 0,
+        tt_cutoffs: 0,
     };
     if moves.is_empty() {
         result.score = Some(-MATE);
@@ -92,24 +134,30 @@ pub fn search(game: &Game, limits: SearchLimits) -> SearchResult {
         result.best_move = Some(moves[0].clone());
         result.principal_variation = moves;
     } else {
-        let mut context = Context {
-            history: game.history.clone(),
-            nodes: 0,
-            qnodes: 0,
-        };
+        let mut context = Context::new(game.history.clone(), limits);
         let mut previous = Vec::new();
         for depth in 1..=limits.max_depth {
+            if let Some(table) = &mut context.table {
+                table.start_iteration(depth);
+            }
             let (score, pv) = context.negamax(position, depth, 0, -INF, INF, &previous);
             result.best_move = pv.first().cloned();
             result.score = Some(score);
             result.completed_depth = depth;
             previous = pv;
+            result.principal_variation = previous.clone();
+            result.nodes = context.nodes;
+            result.quiescence_nodes = context.qnodes;
+            result.tt_probes = context.tt_probes;
+            result.tt_hits = context.tt_hits;
+            result.tt_cutoffs = context.tt_cutoffs;
+            result.elapsed = start.elapsed();
+            reporter(&result);
         }
-        result.principal_variation = previous;
-        result.nodes = context.nodes;
-        result.quiescence_nodes = context.qnodes;
+        return result;
     }
     result.elapsed = start.elapsed();
+    reporter(&result);
     result
 }
 
@@ -120,8 +168,25 @@ struct Context {
     history: Vec<Position>,
     nodes: u64,
     qnodes: u64,
+    table: Option<tt::Table>,
+    tt_probes: u64,
+    tt_hits: u64,
+    tt_cutoffs: u64,
 }
 impl Context {
+    fn new(history: Vec<Position>, limits: SearchLimits) -> Self {
+        Self {
+            history,
+            nodes: 0,
+            qnodes: 0,
+            table: limits
+                .tt_enabled
+                .then(|| tt::Table::new(limits.tt_megabytes)),
+            tt_probes: 0,
+            tt_hits: 0,
+            tt_cutoffs: 0,
+        }
+    }
     fn negamax(
         &mut self,
         position: Position,
@@ -142,12 +207,33 @@ impl Context {
         if repeated(&self.history, position) {
             return (0, Vec::new());
         }
+        let clean = tt::clean_history(&self.history);
+        let mut tt_move = None;
+        if let Some(table) = &self.table {
+            self.tt_probes += 1;
+            let lookup = table.lookup(position, depth, clean, ply, alpha, beta);
+            if lookup.hit {
+                self.tt_hits += 1;
+            }
+            if let Some((score, pv)) = lookup.cutoff {
+                self.tt_cutoffs += 1;
+                return (score, pv);
+            }
+            tt_move = lookup.best_move;
+        }
+        if let Some(first) = tt_move.as_ref() {
+            if let Some(index) = moves.iter().position(|mv| mv == first) {
+                let mv = moves.remove(index);
+                moves.insert(0, mv);
+            }
+        }
         if let Some(first) = preferred.first() {
             if let Some(index) = moves.iter().position(|mv| mv == first) {
                 let mv = moves.remove(index);
                 moves.insert(0, mv);
             }
         }
+        let original_alpha = alpha;
         let mut alpha = alpha;
         let mut best = -INF;
         let mut pv = Vec::new();
@@ -173,6 +259,16 @@ impl Context {
             if alpha >= beta {
                 break;
             }
+        }
+        if let Some(table) = &mut self.table {
+            let bound = if best <= original_alpha {
+                tt::Bound::Upper
+            } else if best >= beta {
+                tt::Bound::Lower
+            } else {
+                tt::Bound::Exact
+            };
+            table.store(position, depth, clean, ply, best, bound, &pv);
         }
         (best, pv)
     }
@@ -268,11 +364,7 @@ mod tests {
             .unwrap()
     }
     fn context(p: Position) -> Context {
-        Context {
-            history: vec![p],
-            nodes: 0,
-            qnodes: 0,
-        }
+        Context::new(vec![p], SearchLimits::default().with_tt_enabled(false))
     }
     fn replay(game: &Game, pv: &[Move]) {
         let mut copy = game.clone();
@@ -356,11 +448,10 @@ mod tests {
             }
             let p = *game.position();
             let expected = exhaustive(p, 2, 0, &mut game.history.clone());
-            let mut ctx = Context {
-                history: game.history.clone(),
-                nodes: 0,
-                qnodes: 0,
-            };
+            let mut ctx = Context::new(
+                game.history.clone(),
+                SearchLimits::default().with_tt_enabled(false),
+            );
             let (actual, pv) = ctx.negamax(p, 2, 0, -INF, INF, &[]);
             assert_eq!(actual, expected);
             replay(&game, &pv);
@@ -400,11 +491,10 @@ mod tests {
         let result = search(&game, SearchLimits::new(2).unwrap());
         assert_eq!(result.score, Some(0));
         assert!(result.best_move.is_none());
-        let mut ctx = Context {
-            history: game.history.clone(),
-            nodes: 0,
-            qnodes: 0,
-        };
+        let mut ctx = Context::new(
+            game.history.clone(),
+            SearchLimits::default().with_tt_enabled(false),
+        );
         assert_eq!(ctx.negamax(p, 2, 0, -INF, INF, &[]).0, 0);
         assert_eq!(ctx.quiescence(p, 0, -INF, INF).0, 0);
         let p = position(
@@ -421,11 +511,10 @@ mod tests {
         let p = position(White, &[(1, White, King), (5, Black, King)]);
         let mv = p.parse_move("1-12").unwrap();
         let child = p.successor(&mv);
-        let mut ctx = Context {
-            history: vec![child, child, p, child],
-            nodes: 0,
-            qnodes: 0,
-        };
+        let mut ctx = Context::new(
+            vec![child, child, p, child],
+            SearchLimits::default().with_tt_enabled(false),
+        );
         assert_eq!(ctx.negamax(child, 2, 1, -INF, INF, &[]).0, 0);
         assert_ne!(
             context(child).negamax(child, 2, 1, -INF, INF, &[]).0,
@@ -560,5 +649,99 @@ mod tests {
         assert!(r.principal_variation[3].is_capture());
         assert_eq!(r.score, Some(exhaustive(p, 3, 0, &mut vec![p])));
         replay(&game, &r.principal_variation);
+    }
+    #[test]
+    fn tt_scores_match_uncached_search_and_all_reported_pvs_replay() {
+        let mut game = Game::default();
+        let mut seed = 3101u64;
+        for _ in 0..32 {
+            if game.outcome() != Outcome::Ongoing {
+                break;
+            }
+            let mut reports = Vec::new();
+            let enabled = search_with_reporter(&game, SearchLimits::new(3).unwrap(), |r| {
+                reports.push(r.clone())
+            });
+            let disabled = search(&game, SearchLimits::new(3).unwrap().with_tt_enabled(false));
+            assert_eq!(enabled.score, disabled.score);
+            for report in &reports {
+                replay(&game, &report.principal_variation);
+            }
+            if enabled.completed_depth > 0 {
+                assert_eq!(reports.len(), 3);
+                assert_eq!(
+                    reports
+                        .iter()
+                        .map(|r| r.completed_depth)
+                        .collect::<Vec<_>>(),
+                    vec![1, 2, 3]
+                );
+                assert!(reports.windows(2).all(|w| w[0].nodes <= w[1].nodes));
+            } else {
+                assert_eq!(reports.len(), 1);
+            }
+            assert_eq!(disabled.tt_probes, 0);
+            assert_eq!(disabled.tt_hits, 0);
+            assert_eq!(disabled.tt_cutoffs, 0);
+            let moves = game.position().legal_moves();
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            game.play(&moves[(seed >> 32) as usize % moves.len()])
+                .unwrap();
+        }
+    }
+    #[test]
+    fn tt_reuses_scores_and_supports_memory_and_disable_controls() {
+        assert!(SearchLimits::new(4).unwrap().tt_enabled());
+        assert_eq!(SearchLimits::default().tt_megabytes(), 16);
+        assert!(SearchLimits::default().with_tt_megabytes(0).is_err());
+        assert!(SearchLimits::default().with_tt_megabytes(257).is_err());
+        let limits = SearchLimits::new(6).unwrap().with_tt_megabytes(1).unwrap();
+        let game = Game::default();
+        let result = search(&game, limits);
+        let reference = search(&game, limits.with_tt_enabled(false));
+        assert_eq!(result.score, reference.score);
+        assert!(result.tt_probes > 0);
+        assert!(result.tt_hits > 0);
+        assert!(result.tt_cutoffs > 0);
+        assert!(result.nodes < reference.nodes);
+        replay(&game, &result.principal_variation);
+        for game in [
+            Game::new(position(White, &[(28, White, Man), (23, Black, Man)])),
+            Game::new(position(White, &[(1, Black, Man)])),
+        ] {
+            let mut reports = Vec::new();
+            let r = search_with_reporter(&game, limits, |r| reports.push(r.clone()));
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].completed_depth, 0);
+            assert_eq!(reports[0].score, r.score);
+        }
+    }
+    #[test]
+    fn same_board_different_reversible_histories_never_share_score_cutoffs() {
+        let p = position(White, &[(1, White, King), (5, Black, King)]);
+        let clean = search(&Game::new(p), SearchLimits::new(4).unwrap());
+        let mut game = Game::new(p);
+        for text in ["1-12", "5-10", "12-1", "10-5"] {
+            let mv = game.position().parse_move(text).unwrap();
+            game.play(&mv).unwrap();
+        }
+        assert_eq!(*game.position(), p);
+        assert!(!tt::clean_history(&game.history));
+        let cached = search(&game, SearchLimits::new(4).unwrap());
+        let uncached = search(&game, SearchLimits::new(4).unwrap().with_tt_enabled(false));
+        assert_eq!(cached.score, uncached.score);
+        replay(&game, &cached.principal_variation);
+        // No man moves or captures occur in the inspected clean king cycle;
+        // dirty root history is not discarded simply because the board matches.
+        let mut ctx = Context::new(game.history.clone(), SearchLimits::new(4).unwrap());
+        let old = clean.principal_variation;
+        ctx.table
+            .as_mut()
+            .unwrap()
+            .store(p, 4, true, 0, 1234, tt::Bound::Exact, &old);
+        let (score, pv) = ctx.negamax(p, 4, 0, -INF, INF, &[]);
+        assert_eq!(score, uncached.score.unwrap());
+        assert_ne!(score, 1234);
+        replay(&game, &pv);
     }
 }

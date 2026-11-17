@@ -3,3 +3,9 @@
 __pycache__/
 *.pyc
 /position-logs/
+/test-tmp/
+/local-*/
+/local-*.json
+/rust-hub-probe.json
+/Cargo.lock.original
+

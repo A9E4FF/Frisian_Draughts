@@ -52,6 +52,7 @@ class HubSession:
         self._process = None
         self._readers = []
         self._pending_done = None
+        self.search_started = None
 
     @property
     def transcript(self):
@@ -176,6 +177,7 @@ class HubSession:
         self.ping()
         self.send('pos', pairs)
         self.send('level', level)
+        self.search_started = time.monotonic()
         self.send('go', [(mode, None)])
         self.state = 'searching'
 

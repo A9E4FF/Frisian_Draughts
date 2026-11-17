@@ -142,3 +142,45 @@ The Windows CI job tests the engine, builds with the committed lockfile and
 uploads a ZIP containing the executable, GPL license, README, Hub documentation,
 source revision URL and SHA-256 checksum. This is a review build artifact;
 publishing a named release can follow the validated match stage.
+
+## Headless matches (stage 4)
+
+```powershell
+python -m tools.testbench match tools/testbench/examples/engines.json --referee target/release/frisian-draughts.exe --depth 2 --max-plies 24 --output match-results
+```
+
+The example deliberately registers the same Rust build twice for a smoke test.
+Replace the second profile with Scan or another build for comparisons. On Linux,
+remove `.exe`. Paths are relative to the configuration file; `cwd` specifies an
+engine's data directory. `arguments` defaults to `["hub"]`; `parameters` contains
+engine-specific Hub settings. The manifest records executable/referee hashes,
+arguments, parameters, working directories and match limits.
+
+Each round pairs every engine combination in both colors. `--master NAME`
+restricts comparisons to one engine; `--parallel N` runs independent games.
+Choose `--depth N`, `--move-time SECONDS`, or `--clock SECONDS --increment SECONDS`.
+Fischer clocks credit increment before each move; measured thinking time starts
+at transmission of `go`. A 50 ms communication margin is explicit in the manifest.
+Depth games have a 60 s response watchdog, separate from playing clocks.
+
+The Rust JSON `inspect` response now includes board encoding and game outcome.
+The rules-only referee replays all moves from the starting FEN for every ply;
+no Python board applies captures or invents legality. This favors correctness
+over process-startup efficiency. Referee work is outside the thinking clock.
+The existing independent Scan differential CI remains essential because Rust
+is both a possible contestant and the rules provider.
+
+Reports contain JSON (authoritative canonical replay), CSV and a PDN display
+export. PDN endpoint notation can be ambiguous for captures: use JSON for exact
+replay. Existing output folders are never overwritten. A ply cap is explicitly
+`adjudication-ply-limit`, not a proven rules draw. There are no score-based or
+one-king heuristics. Separate reasons identify timeout, crash, protocol error,
+missing move, illegal move, referee failure, terminal result and cancellation.
+Crashes/timeouts/illegal moves are forfeits; referee errors are unfinished `*`.
+Ctrl-C requests cancellation and shuts down workers; it does not create a win.
+
+Diagnostic transcripts retain the last 2,000 lines per engine. Full canonical
+game history is always retained; raw logs are diagnostic rather than archival.
+Exit status: 0 for completed/adjudicated games, 1 for engine/referee failures,
+2 for configuration or report errors. Tests can enable real Rust integration
+with `FRISIAN_TEST_ENGINE`; Linux and Windows engine CI do this automatically.

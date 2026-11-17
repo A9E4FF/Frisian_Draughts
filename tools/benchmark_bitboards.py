@@ -36,11 +36,20 @@ with tempfile.TemporaryDirectory(prefix='frisian-bitboard-') as tmp:
     archive.stdout.close()
     if archive.wait() != 0:
         raise RuntimeError('failed to archive baseline')
+    candidate = baseline / 'candidate'
+    # Benchmark a snapshot to avoid rewriting drivers in the active checkout.
+    import shutil
+    shutil.copytree(ROOT, candidate, ignore=shutil.ignore_patterns('.git', 'target', '__pycache__'))
     for example in ['search_bench.rs', 'movegen_bench.rs']:
-        (baseline / 'examples' / example).write_text((ROOT / 'examples' / example).read_text())
+        driver = (ROOT / 'examples' / example).read_text()
+        (baseline / 'examples' / example).write_text(driver)
+        if example == 'search_bench.rs':
+            driver = driver.replace('SearchLimits::new(depth).unwrap()',
+                                    'SearchLimits::new(depth).unwrap().with_tt_enabled(false)')
+        (candidate / 'examples' / example).write_text(driver)
     samples = {'before': [], 'after': []}
     for _ in range(args.repeats):
-        for name, checkout in [('before', baseline), ('after', ROOT)]:
+        for name, checkout in [('before', baseline), ('after', candidate)]:
             samples[name].append({'search': run(checkout, 'search_bench'),
                                   'movegen': run(checkout, 'movegen_bench')[0]})
     canonical = samples['before'][0]

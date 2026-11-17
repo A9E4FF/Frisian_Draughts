@@ -20,6 +20,7 @@ use bitboard::{squares, SPARSE};
 mod bitboard;
 #[cfg(test)]
 mod reference;
+mod tt;
 
 /// Standard square numbering, 1 through 50.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

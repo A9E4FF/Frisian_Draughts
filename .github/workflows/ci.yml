@@ -1,6 +1,17 @@
 name: Rust checks
 on: [push, pull_request]
 jobs:
+  hub-contract:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -W error::ResourceWarning -m unittest discover -s tools/testbench/tests -v
   check:
     runs-on: ubuntu-latest
     steps:
@@ -22,3 +33,4 @@ jobs:
           git clone https://github.com/A9E4FF/scan.git "$RUNNER_TEMP/scan"
           git -C "$RUNNER_TEMP/scan" checkout 7aae17e7b7bfc47744601afb1ee7655e18983ce5
       - run: python3 tools/differential.py "$RUNNER_TEMP/scan"
+

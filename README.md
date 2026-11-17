@@ -163,6 +163,14 @@ mode is separate from human terminal output and flushes every completed depth.
 
 ## Validation
 
+The headless [Hub testbench foundation](docs/hub-testbench.md) provides a Hub v2
+codec, subprocess session, Scan fixtures, and fake-engine compatibility tests.
+It is separate from engine search; the Rust executable does not yet expose Hub.
+
+```sh
+python3 -m unittest discover -s tools/testbench/tests -v
+```
+
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
@@ -213,3 +221,4 @@ Reference revision: `7aae17e7b7bfc47744601afb1ee7655e18983ce5` in
 [A9E4FF/scan](https://github.com/A9E4FF/scan).
 The Rust implementation and validation adapters are distributed under **GPL-3.0-only**;
 see [license.txt](license.txt). No opening books or evaluation weight files are included.
+

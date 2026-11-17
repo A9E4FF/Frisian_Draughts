@@ -11,6 +11,12 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s tools/position_suite/tests -v
+      - run: cargo build --release
+      - run: python3 -m tools.position_suite run tools/position_suite/sample-suite.json --engine target/release/frisian-draughts --logs /tmp/frisian-position-logs
       - name: Fetch pinned Scan reference
         run: |
           git clone https://github.com/A9E4FF/scan.git "$RUNNER_TEMP/scan"

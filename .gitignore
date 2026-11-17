@@ -1,2 +1,5 @@
 /target/
 /tools/scan-oracle
+__pycache__/
+*.pyc
+/position-logs/

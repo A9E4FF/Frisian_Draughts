@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "positions": [
+    {
+      "name": "Starting position — analysis only",
+      "fen": "W:W31-50:B1-20",
+      "depth": 4,
+      "accepted_moves": [],
+      "notes": "No expected move. Inspect the per-depth log without a pass/fail verdict."
+    },
+    {
+      "name": "Avoid the orthogonal edge trap",
+      "fen": "W:W31:B16",
+      "depth": 1,
+      "accepted_moves": ["31-27"],
+      "notes": "31-26 has an edge bonus but loses to an orthogonal capture."
+    },
+    {
+      "name": "King capture — multiple accepted landings",
+      "fen": "W:WK28:B23",
+      "depth": 2,
+      "accepted_moves": ["28x19", "28x14", "28x10", "28x5"],
+      "notes": "Each listed landing captures the final opposing piece. Any listed alternative passes."
+    },
+    {
+      "name": "Forced backward capture continuation",
+      "fen": "W:W11:B7,8",
+      "depth": 2,
+      "accepted_moves": ["11x13"],
+      "notes": "The man crosses the promotion row but ends the full capture on square 13."
+    }
+  ]
+}

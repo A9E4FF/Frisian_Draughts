@@ -74,7 +74,8 @@ new opponent. Search returns a move, side-to-move score, principal variation,
 completed depth, total/quiescence node counts, and elapsed time without changing
 the game. A sole legal move has no searched score and completed depth zero;
 terminal games have no selected move. Positions alone contain no repetition history.
-No unsafe Rust or runtime dependencies are used. Bitboards retain Scan's padded
+No unsafe Rust is used. The JSON analysis bridge uses Serde and serde_json;
+the Python position suite uses the standard library and Tkinter. Bitboards retain Scan's padded
 63-index mapping. Man candidates use masked shifts; king moves and captures use
 precomputed rays and capture-path masks initialized once. Set-bit iteration and
 region population counts avoid scanning empty squares. The coordinate generator
@@ -124,6 +125,41 @@ API remains available. See [TT behavior and benchmarks](docs/transposition-table
 ```sh
 cargo run --release --example tt_bench
 ```
+
+## Python position suite
+
+Build the engine, then launch the minimal desktop tool from the repository root:
+
+```sh
+cargo build --release
+python3 -m tools.position_suite
+```
+
+The tool imports draughts FEN (for example `W:W31-50:B1-20`), previews the numbered
+board, and streams per-depth text logs with scores, PVs, node counts, and TT stats.
+Logs export to `.txt`; position collections save/load as versioned JSON. Python
+3.10+ and Tkinter are required; some Linux installations need `python3-tk`.
+
+Accepted moves are optional and may contain multiple alternatives. Any listed
+legal move can pass; blank lists are analysis-only. Rust validates and normalizes
+all accepted moves before search, including ambiguous capture identities.
+
+FEN does not contain king-restriction counters or prior repetition history. The UI
+shows this limitation and supports supplemental restrictions and replay moves.
+Analysis runs in a subprocess outside Tk's event thread; Cancel stops the process
+without recording a success verdict. Existing terminal play is unchanged.
+
+```sh
+python3 -m tools.position_suite run tools/position_suite/sample-suite.json --logs position-logs
+python3 -m unittest discover -s tools/position_suite/tests -v
+```
+
+The CLI runner exports a text log per case and returns nonzero for failed or invalid
+cases. See [position suite usage and case format](docs/position-suite.md).
+
+The Rust library also exposes `Position::from_fen` and `to_fen`; the compiled
+binary's `--analysis-json` mode provides the line-delimited JSON bridge. This
+mode is separate from human terminal output and flushes every completed depth.
 
 ## Validation
 

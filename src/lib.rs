@@ -1,4 +1,4 @@
-//! Frisian draughts rules and deterministic, search-free move selection.
+//! Frisian draughts rules, a deterministic baseline, and fixed-depth search.
 //! Rule behavior adapted from Scan 3.1, Copyright (C) 2015–2019 Fabien Letouzey.
 //! SPDX-License-Identifier: GPL-3.0-only
 //!
@@ -12,6 +12,8 @@
 //! assert_eq!(game.outcome(), Outcome::Ongoing);
 //! # Ok::<(), frisian_draughts::Error>(())
 //! ```
+pub mod search;
+
 use std::fmt;
 
 const SQUARES: [u8; 50] = [

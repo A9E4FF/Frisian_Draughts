@@ -1,8 +1,11 @@
 //! Hub v2 adapter. Protocol reference: Scan 3.1, Fabien Letouzey; GPL-3.0-only.
-//! Stage 2 supports depth searches synchronously; other limits are rejected.
-use crate::search::{search_with_reporter, SearchLimits, SearchResult};
+//! Search runs in a worker with cooperative limits and responsive command input.
+use crate::search::{search_with_control, SearchControl, SearchLimits, SearchResult};
 use crate::{Error, Game, Piece, Position, Side, Square};
 use std::io::{self, BufRead, Write};
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Message {
@@ -26,6 +29,13 @@ fn name_char(c: char) -> bool {
     !c.is_control() && !c.is_whitespace() && c != '=' && c != '"'
 }
 pub fn parse(line: &str) -> Result<Message, Error> {
+    if line
+        .trim_end_matches(['\r', '\n'])
+        .chars()
+        .any(|c| c.is_control() && c != '\t')
+    {
+        return Err(Error("control character in Hub message".into()));
+    }
     let mut chars = line.trim_end_matches(['\r', '\n']).chars().peekable();
     let error = || Error("malformed Hub message".into());
     fn blanks(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
@@ -162,126 +172,245 @@ fn report(result: &SearchResult) -> String {
     line
 }
 
-/// Blocking depth-only adapter. Existing terminal and JSON modes are separate.
-pub fn run(input: impl BufRead, mut output: impl Write) -> io::Result<()> {
-    let mut game = Game::default();
-    let mut limits = SearchLimits::default();
-    let mut ready = false;
-    for line in input.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+fn line(out: &Mutex<impl Write>, text: &str) -> Result<(), Error> {
+    emit(&mut *out.lock().unwrap(), text).map_err(|e| Error(e.to_string()))
+}
+
+fn seconds(text: &str) -> Result<f64, Error> {
+    let n: f64 = text.parse().map_err(|_| Error("invalid time".into()))?;
+    if !n.is_finite() || n < 0.0 {
+        return Err(Error("time must be finite and nonnegative".into()));
+    }
+    Ok(n)
+}
+fn level(m: &Message, memory: usize) -> Result<(SearchLimits, Option<Duration>), Error> {
+    let depth = m
+        .get("depth")
+        .unwrap_or("64")
+        .parse()
+        .map_err(|_| Error("invalid depth".into()))?;
+    let mut limits = SearchLimits::new(depth)?.with_tt_megabytes(memory)?;
+    if let Some(nodes) = m.get("nodes") {
+        limits =
+            limits.with_max_nodes(nodes.parse().map_err(|_| Error("invalid nodes".into()))?)?;
+    }
+    let duration = if let Some(t) = m.get("move-time") {
+        Some(seconds(t)?)
+    } else if let Some(t) = m.get("time") {
+        let available = seconds(t)? + seconds(m.get("inc").unwrap_or("0"))?;
+        let moves: u32 = m
+            .get("moves")
+            .unwrap_or("30")
+            .parse()
+            .map_err(|_| Error("invalid remaining moves".into()))?;
+        if moves == 0 {
+            return Err(Error("remaining moves must be positive".into()));
         }
-        let result = (|| -> Result<(), Error> {
-            let m = parse(&line)?;
-            match m.command.as_str() {
-                "hub" => {
-                    emit(
-                        &mut output,
-                        &format!(
-                            "id name=Frisian-Draughts version={} author=Contributors",
-                            env!("CARGO_PKG_VERSION")
-                        ),
-                    )
-                    .map_err(|e| Error(e.to_string()))?;
-                    emit(
-                        &mut output,
-                        "param name=variant value=frisian type=enum values=frisian",
-                    )
-                    .map_err(|e| Error(e.to_string()))?;
-                    emit(
-                        &mut output,
-                        "param name=tt-size value=16 type=int min=1 max=256",
-                    )
-                    .map_err(|e| Error(e.to_string()))?;
-                    emit(&mut output, "wait").map_err(|e| Error(e.to_string()))?;
+        Some((available / f64::from(moves) * 0.95).min(available))
+    } else {
+        None
+    };
+    let duration = duration
+        .map(Duration::try_from_secs_f64)
+        .transpose()
+        .map_err(|_| Error("time out of range".into()))?;
+    Ok((limits, duration))
+}
+
+/// Read commands on the owner thread while one scoped worker searches.
+/// Every search has its own control and TT; no old result can cross stop/join.
+pub fn run(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
+    let output = Mutex::new(output);
+    thread::scope(|scope| -> Result<(), Error> {
+        struct StopOnDrop(Option<SearchControl>);
+        impl Drop for StopOnDrop {
+            fn drop(&mut self) {
+                if let Some(c) = &self.0 {
+                    c.stop();
                 }
-                "set-param" => match (m.get("name"), m.get("value")) {
-                    (Some("variant"), Some("frisian")) => {}
-                    (Some("variant"), _) => {
-                        return Err(Error("only frisian variant is supported".into()))
+            }
+        }
+        let mut shutdown = StopOnDrop(None);
+        let mut game = Game::default();
+        let mut memory = 16;
+        let mut limits = SearchLimits::default();
+        let mut duration = None;
+        let mut ready = false;
+        type Active<'scope> = (
+            SearchControl,
+            thread::ScopedJoinHandle<'scope, Result<(), Error>>,
+            Option<Duration>,
+        );
+        let mut active: Option<Active<'_>> = None;
+        for raw in input.lines() {
+            let raw = raw.map_err(|e| Error(e.to_string()))?;
+            if raw.trim().is_empty() {
+                continue;
+            }
+            if active
+                .as_ref()
+                .is_some_and(|(c, h, _)| c.is_stopped() || h.is_finished())
+            {
+                let (_, handle, _) = active.take().unwrap();
+                handle
+                    .join()
+                    .map_err(|_| Error("search worker panicked".into()))??;
+            }
+            let result = (|| -> Result<bool, Error> {
+                let m = parse(&raw)?;
+                if m.command == "quit" {
+                    return Ok(true);
+                }
+                if active.is_some()
+                    && ["pos", "level", "go", "new-game", "init", "set-param"]
+                        .contains(&m.command.as_str())
+                {
+                    return Err(Error("stop active search before changing state".into()));
+                }
+                match m.command.as_str() {
+                    "hub" => {
+                        line(
+                            &output,
+                            &format!(
+                                "id name=Frisian-Draughts version={} author=Contributors",
+                                env!("CARGO_PKG_VERSION")
+                            ),
+                        )?;
+                        line(
+                            &output,
+                            "param name=variant value=frisian type=enum values=frisian",
+                        )?;
+                        line(
+                            &output,
+                            "param name=tt-size value=16 type=int min=1 max=256",
+                        )?;
+                        line(&output, "wait")?;
                     }
-                    (Some("tt-size"), Some(value)) => {
-                        let size = value.parse().map_err(|_| Error("invalid tt-size".into()))?;
-                        limits = limits.with_tt_megabytes(size)?;
+                    "set-param" => match (m.get("name"), m.get("value")) {
+                        (Some("variant"), Some("frisian")) => {}
+                        (Some("variant"), _) => {
+                            return Err(Error("only frisian variant is supported".into()))
+                        }
+                        (Some("tt-size"), Some(v)) => {
+                            let size = v.parse().map_err(|_| Error("invalid tt-size".into()))?;
+                            limits = limits.with_tt_megabytes(size)?;
+                            memory = size;
+                        }
+                        _ => {}
+                    },
+                    "init" => {
+                        ready = true;
+                        line(&output, "ready")?;
+                    }
+                    "ping" => line(&output, "pong")?,
+                    "stop" => {
+                        if let Some((control, handle, _)) = active.take() {
+                            control.stop();
+                            handle
+                                .join()
+                                .map_err(|_| Error("search worker panicked".into()))??;
+                        }
+                    }
+                    "ponder-hit" => {
+                        if let Some((control, _, Some(budget))) = &active {
+                            control.set_time_limit(*budget);
+                        }
+                    }
+                    "new-game" => {
+                        game = Game::default();
+                    }
+                    "pos" => {
+                        let p = if let Some(v) = m.get("pos") {
+                            Position::from_hub(v)?
+                        } else if m.has("start") {
+                            Position::starting()
+                        } else {
+                            return Err(Error("pos requires pos= or start".into()));
+                        };
+                        let mut next = Game::new(p);
+                        for text in m.get("moves").unwrap_or("").split_whitespace() {
+                            let mv = next.position().parse_move(text)?;
+                            next.play(&mv)?;
+                        }
+                        game = next;
+                        limits = SearchLimits::default().with_tt_megabytes(memory)?;
+                        duration = None;
+                    }
+                    "level" => {
+                        let next = level(&m, memory)?;
+                        limits = next.0;
+                        duration = next.1;
+                    }
+                    "go" => {
+                        if !ready {
+                            return Err(Error("init required before go".into()));
+                        }
+                        if !["think", "analyze", "ponder"].iter().any(|k| m.has(k)) {
+                            return Err(Error("go requires think, analyze or ponder".into()));
+                        }
+                        let control = SearchControl::default();
+                        if !m.has("ponder") {
+                            if let Some(d) = duration {
+                                control.set_time_limit(d);
+                            }
+                        }
+                        let worker_control = control.clone();
+                        shutdown.0 = Some(control.clone());
+                        let root = game.clone();
+                        let out = &output;
+                        let search_limits = limits;
+                        let handle = scope.spawn(move || {
+                            let mut failure = None;
+                            let result = search_with_control(
+                                &root,
+                                search_limits,
+                                worker_control.clone(),
+                                |r| {
+                                    if failure.is_none() {
+                                        failure = line(out, &report(r)).err();
+                                    }
+                                    if failure.is_some() {
+                                        worker_control.stop();
+                                    }
+                                },
+                            );
+                            if let Some(e) = failure {
+                                return Err(e);
+                            }
+                            worker_control.stop(); // Mark completion before publishing done.
+                            let done = result
+                                .best_move
+                                .map_or_else(|| "done".to_owned(), |mv| format!("done move={mv}"));
+                            line(out, &done)
+                        });
+                        active = Some((
+                            control,
+                            handle,
+                            if m.has("ponder") { duration } else { None },
+                        ));
+                        limits = SearchLimits::default().with_tt_megabytes(memory)?;
+                        duration = None;
                     }
                     _ => {}
-                },
-                "init" => {
-                    ready = true;
-                    emit(&mut output, "ready").map_err(|e| Error(e.to_string()))?;
                 }
-                "ping" => {
-                    emit(&mut output, "pong").map_err(|e| Error(e.to_string()))?;
-                }
-                "new-game" => {
-                    game = Game::default();
-                }
-                "pos" => {
-                    let position = if let Some(text) = m.get("pos") {
-                        Position::from_hub(text)?
-                    } else if m.has("start") {
-                        Position::starting()
-                    } else {
-                        return Err(Error("pos requires pos= or start".into()));
-                    };
-                    let mut next = Game::new(position);
-                    for text in m.get("moves").unwrap_or("").split_whitespace() {
-                        let mv = next.position().parse_move(text)?;
-                        next.play(&mv)?;
-                    }
-                    game = next; // Commit only after every replay move is valid.
-                    limits = SearchLimits::default().with_tt_megabytes(limits.tt_megabytes())?;
-                }
-                "level" => {
-                    if ["time", "inc", "moves", "move-time", "nodes", "infinite"]
-                        .iter()
-                        .any(|k| m.has(k))
-                    {
-                        return Err(Error("this stage supports level depth only".into()));
-                    }
-                    if let Some(depth) = m.get("depth") {
-                        let depth = depth.parse().map_err(|_| Error("invalid depth".into()))?;
-                        limits =
-                            SearchLimits::new(depth)?.with_tt_megabytes(limits.tt_megabytes())?;
-                    }
-                }
-                "go" => {
-                    if !ready {
-                        return Err(Error("init required before go".into()));
-                    }
-                    if !m.has("think") && !m.has("analyze") {
-                        return Err(Error(
-                            "use go think or go analyze; ponder is not yet supported".into(),
-                        ));
-                    }
-                    let mut failure = None;
-                    let result = search_with_reporter(&game, limits, |r| {
-                        if failure.is_none() {
-                            failure = emit(&mut output, &report(r)).err();
-                        }
-                    });
-                    if let Some(e) = failure {
-                        return Err(Error(e.to_string()));
-                    }
-                    let done = result
-                        .best_move
-                        .map_or_else(|| "done".to_owned(), |mv| format!("done move={mv}"));
-                    emit(&mut output, &done).map_err(|e| Error(e.to_string()))?;
-                }
-                _ => {} // Unknown commands are ignored per Hub v2.
+                Ok(false)
+            })();
+            match result {
+                Ok(true) => break,
+                Err(e) => line(
+                    &output,
+                    &format!("error message={}", quoted(&e.to_string())),
+                )?,
+                Ok(false) => {}
             }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            emit(
-                &mut output,
-                &format!("error message={}", quoted(&error.to_string())),
-            )?;
         }
-        if line.trim() == "quit" {
-            break;
+        if let Some((control, handle, _)) = active {
+            control.stop();
+            handle
+                .join()
+                .map_err(|_| Error("search worker panicked".into()))??;
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .map_err(|e| io::Error::other(e.to_string()))
 }

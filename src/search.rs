@@ -1,7 +1,29 @@
 //! Fixed-depth, single-threaded alpha-beta with mandatory-capture quiescence.
 //! Search design follows Scan 3.1 (Fabien Letouzey); GPL-3.0-only.
 use crate::{bitboard, tt, Error, Game, Move, Position, Side};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
+
+/// Cooperative stop and a deadline which can begin on ponder-hit.
+#[derive(Clone, Default)]
+pub struct SearchControl {
+    stopped: Arc<AtomicBool>,
+    deadline: Arc<Mutex<Option<(Instant, Duration)>>>,
+}
+impl SearchControl {
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::Relaxed)
+    }
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
+    }
+    pub fn set_time_limit(&self, duration: Duration) {
+        *self.deadline.lock().unwrap() = Some((Instant::now(), duration));
+    }
+}
 
 const MATE: i32 = 30_000;
 const INF: i32 = 32_000;
@@ -12,6 +34,8 @@ pub struct SearchLimits {
     max_depth: u8,
     tt_enabled: bool,
     tt_megabytes: usize,
+    max_nodes: Option<u64>,
+    max_time: Option<Duration>,
 }
 impl Default for SearchLimits {
     fn default() -> Self {
@@ -19,6 +43,8 @@ impl Default for SearchLimits {
             max_depth: 10,
             tt_enabled: true,
             tt_megabytes: 16,
+            max_nodes: None,
+            max_time: None,
         }
     }
 }
@@ -35,6 +61,17 @@ impl SearchLimits {
     }
     pub fn max_depth(self) -> u8 {
         self.max_depth
+    }
+    pub fn with_max_nodes(mut self, nodes: u64) -> Result<Self, Error> {
+        if nodes == 0 {
+            return Err(Error("node limit must be positive".into()));
+        }
+        self.max_nodes = Some(nodes);
+        Ok(self)
+    }
+    pub fn with_max_time(mut self, duration: Duration) -> Self {
+        self.max_time = Some(duration);
+        self
     }
     pub fn with_tt_enabled(mut self, enabled: bool) -> Self {
         self.tt_enabled = enabled;
@@ -109,6 +146,15 @@ pub fn search(game: &Game, limits: SearchLimits) -> SearchResult {
 pub fn search_with_reporter(
     game: &Game,
     limits: SearchLimits,
+    reporter: impl FnMut(&SearchResult),
+) -> SearchResult {
+    search_with_control(game, limits, SearchControl::default(), reporter)
+}
+
+pub fn search_with_control(
+    game: &Game,
+    limits: SearchLimits,
+    control: SearchControl,
     mut reporter: impl FnMut(&SearchResult),
 ) -> SearchResult {
     let start = Instant::now();
@@ -134,13 +180,20 @@ pub fn search_with_reporter(
         result.best_move = Some(moves[0].clone());
         result.principal_variation = moves;
     } else {
+        result.best_move = Some(moves[0].clone());
+        result.principal_variation = vec![moves[0].clone()];
         let mut context = Context::new(game.history.clone(), limits);
+        context.control = control;
+        context.started = start;
         let mut previous = Vec::new();
         for depth in 1..=limits.max_depth {
             if let Some(table) = &mut context.table {
                 table.start_iteration(depth);
             }
             let (score, pv) = context.negamax(position, depth, 0, -INF, INF, &previous);
+            if context.aborted {
+                break;
+            }
             result.best_move = pv.first().cloned();
             result.score = Some(score);
             result.completed_depth = depth;
@@ -154,6 +207,12 @@ pub fn search_with_reporter(
             result.elapsed = start.elapsed();
             reporter(&result);
         }
+        result.nodes = context.nodes;
+        result.quiescence_nodes = context.qnodes;
+        result.tt_probes = context.tt_probes;
+        result.tt_hits = context.tt_hits;
+        result.tt_cutoffs = context.tt_cutoffs;
+        result.elapsed = start.elapsed();
         return result;
     }
     result.elapsed = start.elapsed();
@@ -165,6 +224,10 @@ fn repeated(history: &[Position], position: Position) -> bool {
     history.iter().filter(|&&p| p == position).take(3).count() == 3
 }
 struct Context {
+    limits: SearchLimits,
+    control: SearchControl,
+    started: Instant,
+    aborted: bool,
     history: Vec<Position>,
     nodes: u64,
     qnodes: u64,
@@ -176,6 +239,10 @@ struct Context {
 impl Context {
     fn new(history: Vec<Position>, limits: SearchLimits) -> Self {
         Self {
+            limits,
+            control: SearchControl::default(),
+            started: Instant::now(),
+            aborted: false,
             history,
             nodes: 0,
             qnodes: 0,
@@ -187,6 +254,24 @@ impl Context {
             tt_cutoffs: 0,
         }
     }
+    fn interrupted(&mut self) -> bool {
+        let mut stop = self.control.stopped.load(Ordering::Relaxed)
+            || self.limits.max_nodes.is_some_and(|n| self.nodes >= n);
+        if self.nodes.is_multiple_of(256) {
+            stop |= self
+                .limits
+                .max_time
+                .is_some_and(|d| self.started.elapsed() >= d)
+                || self
+                    .control
+                    .deadline
+                    .lock()
+                    .unwrap()
+                    .is_some_and(|(start, d)| start.elapsed() >= d);
+        }
+        self.aborted |= stop;
+        self.aborted
+    }
     fn negamax(
         &mut self,
         position: Position,
@@ -196,6 +281,9 @@ impl Context {
         beta: i32,
         preferred: &[Move],
     ) -> (i32, Vec<Move>) {
+        if self.interrupted() {
+            return (0, Vec::new());
+        }
         if depth == 0 {
             return self.quiescence(position, ply, alpha, beta);
         }
@@ -249,6 +337,9 @@ impl Context {
                 self.negamax(child, depth - 1, ply + 1, -beta, -alpha, next_preferred);
             let score = -score;
             self.history.pop();
+            if self.aborted {
+                return (0, Vec::new());
+            }
             if score > best {
                 best = score;
                 pv.clear();
@@ -279,6 +370,9 @@ impl Context {
         alpha: i32,
         beta: i32,
     ) -> (i32, Vec<Move>) {
+        if self.interrupted() {
+            return (0, Vec::new());
+        }
         self.nodes += 1;
         self.qnodes += 1;
         let moves = position.legal_moves();
@@ -303,6 +397,9 @@ impl Context {
             let (score, continuation) = self.quiescence(child, ply + 1, -beta, -alpha);
             let score = -score;
             self.history.pop();
+            if self.aborted {
+                return (0, Vec::new());
+            }
             if score > best {
                 best = score;
                 pv.clear();
@@ -327,6 +424,57 @@ mod tests {
 
     fn sq(n: u8) -> Square {
         Square::new(n).unwrap()
+    }
+    #[test]
+    fn budgets_cancel_without_publishing_partial_scores_or_tt_entries() {
+        let game = Game::default();
+        let baseline = search(&game, SearchLimits::new(1).unwrap());
+        let control = SearchControl::default();
+        let mut depths = Vec::new();
+        let result = search_with_control(
+            &game,
+            SearchLimits::new(10).unwrap(),
+            control.clone(),
+            |r| {
+                depths.push(r.completed_depth);
+                control.stop();
+            },
+        );
+        assert_eq!(depths, vec![1]);
+        assert_eq!(result.score, baseline.score);
+        assert_eq!(result.best_move, baseline.best_move);
+        let limited = SearchLimits::new(8).unwrap().with_max_nodes(1).unwrap();
+        let result = search(&game, limited);
+        assert_eq!(result.completed_depth, 0);
+        assert_eq!(result.score, None);
+        assert_eq!(result.nodes, 1);
+        assert!(game
+            .position()
+            .legal_moves()
+            .contains(result.best_move.as_ref().unwrap()));
+        let mut ctx = Context::new(game.history.clone(), limited);
+        ctx.negamax(*game.position(), 8, 0, -INF, INF, &[]);
+        assert!(ctx.aborted);
+        assert_eq!(ctx.history, game.history);
+        assert!(ctx
+            .table
+            .as_ref()
+            .unwrap()
+            .lookup(*game.position(), 8, true, 0, -INF, INF)
+            .cutoff
+            .is_none());
+        let zero = search(
+            &game,
+            SearchLimits::new(10).unwrap().with_max_time(Duration::ZERO),
+        );
+        assert_eq!(zero.completed_depth, 0);
+        assert_eq!(zero.nodes, 0);
+        assert_eq!(zero.score, None);
+        let mut ctx = Context::new(game.history.clone(), limited);
+        ctx.control.stop();
+        ctx.quiescence(*game.position(), 0, -INF, INF);
+        assert!(ctx.aborted);
+        assert_eq!(ctx.qnodes, 0);
     }
     fn position(turn: Side, pieces: &[(u8, Side, Piece)]) -> Position {
         Position::new(

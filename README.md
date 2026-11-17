@@ -165,10 +165,11 @@ mode is separate from human terminal output and flushes every completed depth.
 
 The headless [Hub testbench foundation](docs/hub-testbench.md) provides a Hub v2
 codec, subprocess session, Scan fixtures, and fake-engine compatibility tests.
-Launch `frisian-draughts hub` for the initial depth-only Hub adapter. It supports
+Launch `frisian-draughts hub` for the Hub v2 adapter. It supports
 initialization, board/history loading, depth-limited think/analyze searches,
-progressive information and completion output. Search is currently blocking:
-time/node limits, stop/ping during search and pondering arrive in stage 3.
+progressive information and completion output, time/node limits, cooperative
+stop, ping during search and pondering with a clock starting on ponder-hit.
+Depth remains capped at 64, including infinite analysis (Hub permits early completion).
 
 ```sh
 python3 -m unittest discover -s tools/testbench/tests -v

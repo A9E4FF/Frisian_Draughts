@@ -10,6 +10,9 @@ from .session import EngineProfile, HubSession
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == 'match':
+        from .matches import main as matches_main
+        return matches_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('engine', help='Hub executable path')
     parser.add_argument('--cwd', help='Engine working directory (Scan data files)')

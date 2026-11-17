@@ -1,6 +1,6 @@
 //! Line-delimited JSON bridge for the Python position suite.
 use frisian_draughts::search::{search_with_reporter, SearchLimits, SearchResult};
-use frisian_draughts::{Game, KingRestriction, Piece, Position, Side, Square};
+use frisian_draughts::{Game, KingRestriction, Outcome, Piece, Position, Side, Square};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -130,7 +130,13 @@ fn handle(request: Request, out: &mut impl Write) -> Result<(), String> {
         let sq=Square::new(n).unwrap();position.piece_at(sq).map(|(side,pc)|
             json!({"square":n,"side":side_name(side),"piece":if pc==Piece::Man {"man"}else{"king"}}))
     }).collect();
-    emit(out,&json!({"type":"loaded","fen":position.to_fen(),"turn":side_name(position.turn()),
+    let outcome = match game.outcome() {
+        Outcome::Ongoing => "ongoing",
+        Outcome::Draw => "draw",
+        Outcome::Won(Side::White) => "white-win",
+        Outcome::Won(Side::Black) => "black-win",
+    };
+    emit(out,&json!({"type":"loaded","fen":position.to_fen(),"hub":position.to_hub(),"outcome":outcome,"turn":side_name(position.turn()),
         "pieces":pieces,"restrictions":{"white":restriction_json(position,Side::White),"black":restriction_json(position,Side::Black)},
         "legal_moves":position.legal_moves().iter().map(ToString::to_string).collect::<Vec<_>>(),
         "accepted_moves":accepted,"warnings":["FEN has no earlier repetition history; king restrictions start at zero unless supplied. Replay contains history only from the imported position onward."]}))

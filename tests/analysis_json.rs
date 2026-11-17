@@ -23,6 +23,8 @@ fn imports_fen_and_accepts_any_of_multiple_legal_answers() {
         json!({"command":"analyze","fen":"W:W31:B16","depth":1,"accepted_moves":["31-26","31-27"]}),
     );
     assert_eq!(events[0]["type"], "loaded");
+    assert_eq!(events[0]["hub"].as_str().unwrap().len(), 51);
+    assert_eq!(events[0]["outcome"], "ongoing");
     assert_eq!(events[0]["pieces"].as_array().unwrap().len(), 2);
     assert!(!events[0]["warnings"].as_array().unwrap().is_empty());
     assert!(events.iter().any(|e| e["type"] == "iteration"));

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "engines": [
+    {"name": "Rust A", "executable": "../../../target/release/frisian-draughts.exe"},
+    {"name": "Rust B", "executable": "../../../target/release/frisian-draughts.exe"}
+  ]
+}

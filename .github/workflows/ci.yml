@@ -8,6 +8,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - name: Test real Hub match integration
+        shell: pwsh
+        run: |
+          $env:FRISIAN_TEST_ENGINE = "$pwd/target/release/frisian-draughts.exe"
+          python -m unittest discover -s tools/testbench/tests -v
       - name: Package Hub executable
         shell: pwsh
         run: |
@@ -47,6 +52,7 @@ jobs:
           python-version: '3.12'
       - run: python3 -m unittest discover -s tools/position_suite/tests -v
       - run: cargo build --release
+      - run: FRISIAN_TEST_ENGINE="$PWD/target/release/frisian-draughts" python3 -m unittest discover -s tools/testbench/tests -v
       - run: python3 -m tools.position_suite run tools/position_suite/sample-suite.json --engine target/release/frisian-draughts --logs /tmp/frisian-position-logs
       - name: Fetch pinned Scan reference
         run: |

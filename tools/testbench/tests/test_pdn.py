@@ -1,0 +1,49 @@
+import os
+import unittest
+from tools.testbench import pdn
+
+
+class DocumentTests(unittest.TestCase):
+    def test_multigame_annotations_variations_and_escaping_roundtrip(self):
+        text = '[Event "A \\\"quote\\\""]\n[Result "*"]\n\n1. 31-26 {comment} $1 (1. 32-28 !? (1. 33-29)) 16-21 ;line\n*\n\n[Event "B"]\n[Result "*"]\n1. 32-28 *'
+        games = pdn.loads(text)
+        restored = pdn.loads(pdn.dumps(games))
+        self.assertEqual(len(games), 2)
+        self.assertEqual([(g.tags, g.tokens) for g in games], [(g.tags, g.tokens) for g in restored])
+
+    def test_malformed_game_recovers_at_next_header(self):
+        games = pdn.loads('[Event "Bad"]\n1. 31-26 {unclosed\n\n[Event "Good"]\n1. 32-28 *')
+        self.assertEqual(len(games), 2)
+        self.assertTrue(games[0].errors)
+        self.assertEqual(games[1].tag('Event'), 'Good')
+
+    def test_black_start_and_lossless_capture_export(self):
+        game = pdn.from_record({'fen': 'B:WK28:B23', 'moves': ['23x32x28'], 'result': '*'})
+        self.assertEqual(game.tokens[0], '1...')
+        self.assertIn('{[%hub 23x32x28]}', game.tokens)
+
+    def test_ambiguous_capture_never_guessed(self):
+        state = {'legal_moves': ['49x47x7x11', '49x47x8x12'], 'pieces': [], 'turn': 'white'}
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            pdn.resolve('49x47', state)
+        self.assertEqual(pdn.resolve('49x47', state, '49x47x7x11'), '49x47x7x11')
+        with self.assertRaises(ValueError):
+            pdn.resolve('49x46', state, '49x47x7x11')
+
+    @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'), 'real referee required')
+    def test_referee_validates_variations_fen_and_landing_paths(self):
+        from tools.testbench.referee import Referee
+        referee = Referee(os.environ['FRISIAN_TEST_ENGINE'])
+        games = pdn.loads('[Result "*"]\n1. 31-26 (1. 32-28 17-22) 16-21 *\n\n[FEN "W:WK28:B23"]\n[Result "1-0"]\n1. 28x19 1-0')
+        for game in games:
+            pdn.validate(game, referee)
+            self.assertEqual(game.errors, [])
+        self.assertEqual(games[1].moves, ['28x19x23'])
+        exported = pdn.from_record({'fen': games[1].fen, 'moves': games[1].moves, 'result': '1-0'})
+        restored = pdn.validate(pdn.loads(pdn.dumps([exported]))[0], referee)
+        self.assertEqual(restored.moves, games[1].moves)
+        self.assertEqual(restored.errors, [])
+
+
+if __name__ == '__main__':
+    unittest.main()

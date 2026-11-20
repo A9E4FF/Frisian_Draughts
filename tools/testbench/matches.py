@@ -15,6 +15,7 @@ import threading
 from .protocol import ProtocolError
 from .referee import InvalidState, Referee, RefereeUnavailable
 from .session import EngineExited, EngineProfile, HubError, HubSession, HubTimeout
+from . import pdn
 
 START = 'W:W31-50:B1-20'
 
@@ -102,7 +103,7 @@ def canonical_move(text, legal_moves):
         return None
 
 
-def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSession, cancel=None):
+def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSession, cancel=None, on_event=lambda event: None):
     entrants = [white, black]
     sessions = []
     moves = []
@@ -110,9 +111,13 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
     result = {'white': white.name, 'black': black.name, 'fen': fen, 'moves': moves,
               'result': '*', 'termination': 'unfinished', 'plies': [], 'transcripts': {}}
     side = None
+    if cancel is not None and cancel.is_set():
+        result['termination'] = 'user-cancelled'
+        return result
     try:
         state = referee.inspect(fen)
         initial = state['hub']
+        on_event({'type': 'position', 'state': state, 'moves': []})
         for side, entrant in enumerate(entrants):
             session = session_factory(entrant.profile)
             sessions.append(session)
@@ -144,6 +149,7 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
                 budget = None
                 level = [('depth', limits.depth)]
             session.begin_search(initial, moves=moves, level=level)
+            on_event({'type': 'thinking', 'engine': entrants[side].name, 'ply': ply})
             started = session.search_started
             timeout = limits.response_timeout if budget is None else max(0.001, budget + limits.clock_margin)
             while True:
@@ -154,7 +160,8 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
                     result.update(result='*', termination='user-cancelled')
                     return result
                 try:
-                    done = session.wait_done(timeout=min(0.1, remaining))
+                    done = session.wait_done(timeout=min(0.1, remaining),
+                        on_info=lambda m: on_event({'type': 'search-info', 'engine': entrants[side].name, 'fields': dict(m.pairs)}))
                     break
                 except HubTimeout:
                     continue
@@ -172,6 +179,7 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
             result['plies'].append({'move': move, 'seconds': elapsed,
                                     'remaining_clock': clocks[side]})
             state = referee.inspect(fen, moves)
+            on_event({'type': 'position', 'state': state, 'moves': list(moves)})
     except (InvalidState, RefereeUnavailable) as exc:
         result.update(result='*', termination='referee-error', error=str(exc))
     except (HubTimeout, EngineExited, HubError, ProtocolError, OSError) as exc:
@@ -195,22 +203,47 @@ def save_reports(directory, games, manifest):
         writer = csv.DictWriter(out, fieldnames=['white', 'black', 'result', 'termination'])
         writer.writeheader()
         writer.writerows({k: game[k] for k in writer.fieldnames} for game in games)
-    def escape(text):
-        return str(text).replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-    pdn = []
-    for game in games:
-        tags = [('White', game['white']), ('Black', game['black']), ('Result', game['result']),
-                ('FEN', game['fen']), ('SetUp', '1'), ('Termination', game['termination'])]
-        pdn.extend(f'[{k} "{escape(v)}"]' for k, v in tags)
-        # Full canonical capture identifiers are kept in JSON. PDN endpoints
-        # alone can be ambiguous: do not use this view as the replay authority.
-        body = []
-        for i, move in enumerate(game['moves']):
-            if i % 2 == 0:
-                body.append(f'{i // 2 + 1}.')
-            body.append('x'.join(move.split('x')[:2]) if 'x' in move else move)
-        pdn.append(' '.join([*body, game['result']]) + '\n')
-    (directory / 'games.pdn').write_text('\n'.join(pdn), encoding='utf-8')
+    (directory / 'games.pdn').write_text(pdn.dumps([pdn.from_record(g) for g in games]), encoding='utf-8')
+
+
+
+def manifest_for(engines, referee, limits, rounds=1):
+    return {'schema': 1, 'limits': vars(limits), 'rounds': rounds,
+        'referee_sha256': hashlib.sha256(Path(referee.executable).read_bytes()).hexdigest(),
+        'engines': [{'name': e.name, 'executable': e.profile.executable, 'arguments': e.profile.arguments,
+                     'cwd': e.profile.cwd, 'parameters': e.parameters, 'revision': e.revision,
+                     'sha256': hashlib.sha256(Path(e.profile.executable).read_bytes()).hexdigest()} for e in engines]}
+
+
+def run_tournament(engines, referee, limits, *, rounds=1, parallel=1, master=None,
+                   cancel=None, on_event=lambda event: None, output=None):
+    if rounds < 1 or parallel < 1 or len(engines) < 2:
+        raise ValueError('positive rounds/parallel and two engines required')
+    if master is not None and master not in [e.name for e in engines]:
+        raise ValueError('unknown master engine')
+    if output is not None and Path(output).exists():
+        raise ValueError('choose a new report directory')
+    manifest = manifest_for(engines, referee, limits, rounds)
+    cancel = cancel or threading.Event()
+    pairs = schedule(engines, rounds, master)
+    def run(item):
+        number, (a, b) = item
+        def progress(event):
+            on_event({**event, 'game': number, 'total': len(pairs)})
+        progress({'type': 'game-started', 'white': engines[a].name, 'black': engines[b].name})
+        game = play_game(engines[a], engines[b], referee, limits, cancel=cancel, on_event=progress)
+        progress({'type': 'game-finished', 'record': game})
+        return game
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
+        futures = [pool.submit(run, item) for item in enumerate(pairs, 1)]
+        try:
+            games = [f.result() for f in futures]
+        except KeyboardInterrupt:
+            cancel.set()
+            games = [f.result() for f in futures]
+    if output is not None:
+        save_reports(output, games, manifest)
+    return games
 
 
 def main(argv=None):
@@ -227,6 +260,7 @@ def main(argv=None):
     parser.add_argument('--parallel', type=int, default=1)
     parser.add_argument('--master')
     parser.add_argument('--max-plies', type=int, default=200)
+    parser.add_argument('--response-timeout', type=float, default=60)
     args = parser.parse_args(argv)
     try:
         engines = load_config(args.config)
@@ -236,23 +270,10 @@ def main(argv=None):
             raise ValueError('choose a new output directory; existing reports are never overwritten')
         limits = MatchLimits(depth=args.depth if args.depth is not None else (4 if args.move_time is None and args.clock is None else None),
                              move_time=args.move_time, clock=args.clock, increment=args.increment,
-                             max_plies=args.max_plies)
+                             max_plies=args.max_plies, response_timeout=args.response_timeout)
         referee_path = os.path.abspath(args.referee)
         referee = Referee(referee_path)
-        manifest = {'schema': 1, 'limits': vars(limits), 'rounds': args.rounds,
-                    'referee_sha256': hashlib.sha256(Path(referee_path).read_bytes()).hexdigest(),
-                    'engines': [{'name': e.name, 'executable': e.profile.executable,
-                                 'arguments': e.profile.arguments, 'cwd': e.profile.cwd, 'parameters': e.parameters, 'revision': e.revision,
-                                 'sha256': hashlib.sha256(Path(e.profile.executable).read_bytes()).hexdigest()} for e in engines]}
-        pairs = schedule(engines, args.rounds, args.master)
-        cancel = threading.Event()
-        with ThreadPoolExecutor(max_workers=args.parallel) as pool:
-            try:
-                games = list(pool.map(lambda pair: play_game(engines[pair[0]], engines[pair[1]], referee, limits, cancel=cancel), pairs))
-            except KeyboardInterrupt:
-                cancel.set()
-                raise
-        save_reports(args.output, games, manifest)
+        games = run_tournament(engines, referee, limits, rounds=args.rounds, parallel=args.parallel, master=args.master, output=args.output)
         for game in games:
             print(f"{game['white']} – {game['black']}: {game['result']} ({game['termination']})")
         return 1 if any(g['termination'] not in ('terminal-loss', 'rules-draw', 'adjudication-ply-limit') for g in games) else 0

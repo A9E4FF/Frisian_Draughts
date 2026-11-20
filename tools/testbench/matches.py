@@ -206,7 +206,7 @@ def save_reports(directory, games, manifest):
         writer = csv.DictWriter(out, fieldnames=['white', 'black', 'result', 'termination'])
         writer.writeheader()
         writer.writerows({k: game[k] for k in writer.fieldnames} for game in games)
-    (directory / 'games.pdn').write_text(pdn.dumps([pdn.from_record(g) for g in games]), encoding='utf-8')
+    (directory / 'games.pdn').write_text(pdn.dumps([pdn.from_record(g, dialect='scan') for g in games]), encoding='utf-8')
 
 
 

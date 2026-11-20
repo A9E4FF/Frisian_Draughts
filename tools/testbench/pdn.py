@@ -115,7 +115,8 @@ def resolve(text, state, explicit=None):
             raise ValueError(f'illegal explicit capture identifier {explicit}')
         endpoint = re.split(r'[-xX:]', text.rstrip('!?'))
         full = re.split(r'[-x]', explicit)
-        if endpoint[0] != full[0] or endpoint[-1] != full[1]:
+        scan_identity = len(endpoint) > 2 and endpoint[:2] == full[:2] and sorted(endpoint[2:], key=int) == sorted(full[2:], key=int)
+        if endpoint[0] != full[0] or (endpoint[-1] != full[1] and not scan_identity):
             raise ValueError('PDN endpoints disagree with explicit capture identifier')
         return explicit
     text = text.rstrip('!?').replace('X', 'x').replace(':', 'x')
@@ -201,7 +202,42 @@ def validate(game, referee):
     return game
 
 
-def from_record(record):
+def landing_path(move, state):
+    """Find a legal move's display path; the referee remains the legality oracle."""
+    values = [int(s) for s in move.split('x')]
+    source, destination, *victims = values
+    pieces = {p['square']: p for p in state['pieces']}
+    moving = pieces.pop(source)
+    coords = {coordinates(s): s for s in range(1, 51)}
+    directions = [(-1,-1),(-1,1),(1,-1),(1,1),(-2,0),(2,0),(0,-2),(0,2)]
+    attempts = [0]
+    def visit(current, taken, path):
+        attempts[0] += 1
+        if attempts[0] > 200000:
+            raise ValueError('capture path exceeds export work limit; use Scan notation')
+        if len(taken) == len(victims):
+            return path if current == destination else None
+        r,c = coordinates(current)
+        for dr,dc in directions:
+            victim = None
+            for step in range(1, 11):
+                target = coords.get((r+dr*step,c+dc*step))
+                if target is None: break
+                if target in pieces:
+                    if victim is not None or target not in victims or target in taken: break
+                    victim = target
+                elif victim is not None:
+                    result = visit(target, taken | {victim}, path+[target])
+                    if result: return result
+                    if moving['piece'] == 'man': break
+                if moving['piece'] == 'man' and step >= 2: break
+        return None
+    result = visit(source, set(), [source])
+    if result is None: raise ValueError(f'cannot reconstruct standard capture path: {move}')
+    return 'x'.join(map(str, result))
+
+
+def from_record(record, referee=None, dialect='standard'):
     """Lossless project export, using an explicit capture identity annotation.
 
     Endpoint notation stays standard PDN. Importers which ignore comments may
@@ -214,7 +250,10 @@ def from_record(record):
     if record.get('restrictions'):
         tags.append(('FrisianState', 'See canonical JSON report'))
     game = Game(tags)
+    if dialect not in ('standard', 'scan'): raise ValueError('unknown PDN capture dialect')
+    if dialect == 'scan': game.tags.append(('CaptureNotation', 'Scan captured squares'))
     black = game.fen.startswith('B')
+    history = []
     for ply, move in enumerate(record['moves']):
         if (ply + black) % 2 == 0:
             game.tokens.append(f'{(ply+black)//2+1}.')
@@ -222,8 +261,12 @@ def from_record(record):
             game.tokens.append('1...')
         if 'x' in move:
             values = move.split('x')
-            game.tokens.extend(['x'.join(values[:2]), '{[%hub ' + move + ']}'])
+            notation = move if dialect == 'scan' else landing_path(move, referee.inspect(game.fen, history)) if referee else 'x'.join(values[:2])
+            game.tokens.extend([notation, '{[%hub ' + move + ']}'])
         else:
             game.tokens.append(move)
+        history.append(move)
+    if referee is not None:
+        referee.inspect(game.fen, history)
     game.tokens.append(record.get('result', '*'))
     return game

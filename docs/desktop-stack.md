@@ -18,3 +18,20 @@ include `[%hub ...]` comments to preserve exact capture identities. Importers
 which ignore these comments may still need capture disambiguation. Ordinary PDN
 cannot reconstruct arbitrary initial restriction counters; use canonical JSON
 for such states. Never silently reset counters on PDN export/import.
+
+## PDN and replay workspace
+
+Import PDN lists every game, including malformed games labeled `[ERROR]`.
+Choose a game and use the replay slider; mainline annotations and variations
+remain visible. Analyze this position reconstructs the selected ply's history.
+Export game/all preserves imported annotations and notation. Newly generated
+games can export standard landing paths or Scan's captured-square dialect.
+Choose Scan notation for the supplied ScanGraphic GUI. Standard paths are
+reconstructed from a referee-validated move, not by treating captured squares
+as intermediate landings. Explicit capture comments remain for exact identity.
+
+Export analysis PDN adds a clearly labeled engine comment at the analyzed ply,
+retaining original annotations and variations when the game was imported.
+Scores specify men and side-to-move perspective. Arbitrary initial king counters
+cannot be exported faithfully in ordinary PDN; keep the versioned JSON case.
+Position-suite load/edit/save preserves TT fields and other case metadata.

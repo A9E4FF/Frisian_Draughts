@@ -21,6 +21,7 @@ from tools.testbench.referee import Referee
 from tools.testbench.session import EngineProfile, HubSession
 from .board import BoardWidget
 from .models import board_fen, load_replay, move_tuple
+from tools.testbench import pdn
 
 
 class Task(QThread):
@@ -56,6 +57,9 @@ class Window(QMainWindow):
         self._close_pending = False
         self._move_signal = False
         self._legal = []
+        self._case_base = {}
+        self.pdn_document = None
+        self.analysis_notes = []
         root = QWidget(); outer = QVBoxLayout(root); self.setCentralWidget(root)
         row = QHBoxLayout(); outer.addLayout(row)
         self.engine = QComboBox(); self.engine.addItem('Rust'); row.addWidget(QLabel('Analyze with')); row.addWidget(self.engine)
@@ -93,8 +97,6 @@ class Window(QMainWindow):
                              ('Accepted alternatives', self.expected), ('Notes', self.notes)]:
             form.addRow(label, field)
         self.setup = QCheckBox('Edit a new setup (clears history)'); form.addRow(self.setup)
-        self.setup.toggled.connect(self.board.set_legality_check)
-        self.setup.toggled.disconnect(self.board.set_legality_check)
         self.setup.toggled.connect(self.setup_changed)
         row = QHBoxLayout(); form.addRow(row)
         self.button(row, 'Preview', self.preview)
@@ -116,6 +118,7 @@ class Window(QMainWindow):
         self.button(row, 'Load suite', self.load_cases); self.button(row, 'Save suite', self.save_cases)
         self.button(row, 'Add / update analysis case', self.add_case)
         self.button(row, 'Run all cases', self.run_cases)
+        self.button(row, 'Run selected case', self.run_selected_case)
 
     def make_matches(self):
         tab = QWidget(); layout = QHBoxLayout(tab); settings = QWidget(); form = QFormLayout(settings)
@@ -146,17 +149,25 @@ class Window(QMainWindow):
         tab = QWidget(); layout = QVBoxLayout(tab); self.tabs.addTab(tab, 'Replay')
         row = QHBoxLayout(); layout.addLayout(row)
         self.button(row, 'Load games.json', self.open_replay)
+        self.button(row, 'Import PDN', self.open_pdn)
+        self.button(row, 'Export game PDN', lambda: self.choose_pdn_export(False))
+        self.button(row, 'Export all PDN', lambda: self.choose_pdn_export(True))
         self.game_selector = QComboBox(); row.addWidget(self.game_selector)
         self.game_selector.currentIndexChanged.connect(self.select_game)
         self.replay_board = BoardWidget(); self.replay_board.setEnabled(False); layout.addWidget(self.replay_board)
         self.slider = QSlider(Qt.Horizontal); self.slider.valueChanged.connect(self.replay_position); layout.addWidget(self.slider)
         self.replay_label = QLabel('Load a canonical JSON match report.'); layout.addWidget(self.replay_label)
+        self.annotation_view = QPlainTextEdit(); self.annotation_view.setReadOnly(True); self.annotation_view.setMaximumHeight(110); layout.addWidget(self.annotation_view)
+        row = QHBoxLayout(); layout.addLayout(row)
+        self.button(row, 'Analyze this position', self.analyze_replay)
+        self.button(row, 'Export analysis PDN', self.choose_analysis_export)
+        self.dialect = QComboBox(); self.dialect.addItems(['Standard landing paths', 'Scan captured squares']); row.addWidget(self.dialect)
 
     def selected_engine(self):
         return self.engines[self.engine.currentIndex()]
 
     def current_case(self):
-        return validate_case({'name': self.name.text(), 'fen': self.fen.text(), 'depth': self.depth.value(),
+        return validate_case({**self._case_base, 'name': self.name.text(), 'fen': self.fen.text(), 'depth': self.depth.value(),
             'moves': self.replay_moves.toPlainText().split(), 'restrictions': json.loads(self.restrictions.text()),
             'accepted_moves': [m for m in re.split(r'[\s,]+', self.expected.text()) if m], 'notes': self.notes.text()})
 
@@ -246,14 +257,18 @@ class Window(QMainWindow):
     def analyze(self):
         try:
             case = self.current_case(); entrant = self.selected_engine()
-            session = HubAnalysisSession(entrant.profile, self.referee.text())
-            self.start(lambda emit: session.run(case, emit),
-                       lambda outcome: self.log.appendPlainText(f'{outcome.status.upper()} {outcome.message}'), session.cancel)
+            session = HubAnalysisSession(entrant.profile, self.referee.text(), parameters=entrant.parameters)
+            def finished(outcome):
+                self.log.appendPlainText(f'{outcome.status.upper()} {outcome.message}')
+                if outcome.result and outcome.status in ('passed', 'failed', 'analysis'):
+                    self.analysis_notes.append({'case': case, 'engine': entrant.name, 'result': outcome.result})
+            self.start(lambda emit: session.run(case, emit), finished, session.cancel)
         except Exception as exc: self.error(str(exc))
 
     def setup_changed(self, enabled):
         self.board.set_legality_check(not enabled)
         if enabled:
+            self._case_base = {}
             self.replay_moves.clear(); self.restrictions.setText('{}'); self.expected.clear()
             self.log.appendPlainText('New setup: history and restriction counters cleared.')
 
@@ -350,18 +365,25 @@ class Window(QMainWindow):
     def select_case(self, index):
         if not 0 <= index < len(self.cases): return
         case = self.cases[index]; self.name.setText(case['name']); self.fen.setText(case['fen'])
+        self._case_base = dict(case)
         self.replay_moves.setPlainText(' '.join(case.get('moves', []))); self.depth.setValue(case.get('depth', 10))
         self.restrictions.setText(json.dumps(case.get('restrictions', {}))); self.expected.setText(', '.join(case.get('accepted_moves', [])))
         self.notes.setText(case.get('notes', ''))
 
-    def run_cases(self):
-        cases = list(self.cases); entrant = self.selected_engine(); referee = self.referee.text(); cancel = threading.Event()
+    def run_selected_case(self):
+        index = self.case_list.currentRow()
+        if 0 <= index < len(self.cases): self.run_cases([self.cases[index]])
+
+    def run_cases(self, cases=None):
+        cases = list(self.cases) if not isinstance(cases, list) else list(cases)
+        entrant = self.selected_engine(); referee = self.referee.text(); cancel = threading.Event()
         current = [None]
         def work(emit):
             outcomes = []
             for case in cases:
                 if cancel.is_set(): break
-                session = HubAnalysisSession(entrant.profile, referee); current[0] = session
+                session = HubAnalysisSession(entrant.profile, referee, parameters=entrant.parameters); current[0] = session
+                if cancel.is_set(): session.cancel()
                 outcome = session.run(case, emit); outcomes.append(outcome)
                 emit({'type': 'case-finished', 'name': case['name'], 'status': outcome.status, 'message': outcome.message})
             return outcomes
@@ -398,13 +420,102 @@ class Window(QMainWindow):
             try: self.set_games(load_replay(path))
             except Exception as exc: self.error(str(exc))
 
+    def open_pdn(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Import games', '', 'PDN (*.pdn *.PDN)')
+        if path: self.import_pdn(path)
+
+    def import_pdn(self, path):
+        referee = Referee(self.referee.text()); cancel = threading.Event()
+        def work(emit):
+            documents = pdn.loads(Path(path).read_text(encoding='utf-8-sig'))
+            for index, document in enumerate(documents, 1):
+                if cancel.is_set():
+                    document.errors.append('Import cancelled'); continue
+                pdn.validate(document, referee)
+                emit({'type': 'case-finished', 'name': f'PDN game {index}',
+                      'status': 'error' if document.errors else 'loaded', 'message': '; '.join(document.errors)})
+            return documents
+        def completed(documents):
+            games = [{'fen': g.fen, 'moves': list(g.moves), 'white': g.tag('White', '?'),
+                'black': g.tag('Black', '?'), 'event': g.tag('Event', '?'), 'result': g.tag('Result', '*'),
+                'errors': list(g.errors), 'termination': 'PDN import'} for g in documents]
+            self.set_games(games); self.pdn_document = documents
+            index = self.game_selector.currentIndex()
+            if index >= 0: self.annotation_view.setPlainText(' '.join(documents[index].tokens) + '\n' + '; '.join(documents[index].errors))
+        self.start(work, completed, cancel.set)
+
+    def choose_pdn_export(self, all_games):
+        path, _ = QFileDialog.getSaveFileName(self, 'Export PDN games', 'games.pdn', 'PDN (*.pdn)')
+        if path: self.export_pdn(path, all_games=all_games)
+
+    def export_pdn(self, path, *, all_games=False):
+        import copy
+        index = self.game_selector.currentIndex()
+        if not 0 <= index < len(self.games): return self.error('Select a game first')
+        indices = list(range(len(self.games))) if all_games else [index]
+        records = [copy.deepcopy(self.games[i]) for i in indices]
+        originals = [copy.deepcopy(self.pdn_document[i]) for i in indices] if self.pdn_document else None
+        referee = Referee(self.referee.text()); dialect = 'scan' if self.dialect.currentIndex() else 'standard'
+        def work(emit):
+            if any(any(g.get('restrictions', {}).values()) for g in records):
+                raise ValueError('PDN cannot store initial king counters; retain canonical JSON instead')
+            documents = originals or [pdn.from_record(g, referee, dialect) for g in records]
+            for number, (document, record) in enumerate(zip(documents, records), 1):
+                if document.errors or record.get('errors'):
+                    raise ValueError(f'Game {number}: fix import errors before export')
+            Path(path).write_text(pdn.dumps(documents), encoding='utf-8')
+            return len(documents)
+        self.start(work, lambda n: self.log.appendPlainText(f'Exported {n} PDN game(s)'))
+
+    def analyze_replay(self):
+        index = self.game_selector.currentIndex()
+        if not 0 <= index < len(self.games): return
+        game = self.games[index]
+        if game.get('errors'): return self.error('; '.join(game['errors']))
+        self._case_base = {}; self.name.setText('Replay analysis'); self.fen.setText(game['fen'])
+        self.replay_moves.setPlainText(' '.join(game['moves'][:self.slider.value()]))
+        self.restrictions.setText(json.dumps(game.get('restrictions', {}))); self.expected.clear()
+        self.tabs.setCurrentIndex(0); self.analyze()
+
+    def choose_analysis_export(self):
+        path, _ = QFileDialog.getSaveFileName(self, 'Export latest analysis', 'analysis.pdn', 'PDN (*.pdn)')
+        if path: self.export_analysis_pdn(path)
+
+    def export_analysis_pdn(self, path):
+        import copy
+        if not self.analysis_notes: return self.error('Run an analysis first')
+        note = copy.deepcopy(self.analysis_notes[-1]); case = note['case']; referee = Referee(self.referee.text())
+        originals = copy.deepcopy(self.pdn_document)
+        def work(emit):
+            if any(case.get('restrictions', {}).values()):
+                raise ValueError('PDN cannot represent imported restriction counters; keep the JSON position case')
+            document = next((d for d in originals or [] if d.fen == case['fen'] and d.moves[:len(case['moves'])] == case['moves']), None)
+            if document is None:
+                document = pdn.from_record({'fen': case['fen'], 'moves': case['moves'], 'result': '*', 'event': 'Analysis'}, referee)
+            result = note['result']; score = result.get('score')
+            text = f"Engine analysis ({note['engine']}): depth {result.get('depth', 0)}; score {score/100 if score is not None else 'unsearched'} men, side to move; PV {' '.join(result.get('pv', []))}"
+            annotation = '{' + text.replace('{', '(').replace('}', ')') + '}'
+            wanted = len(case['moves']); count = 0; nesting = 0; insertion = 0
+            for i, token in enumerate(document.tokens):
+                if token == '(': nesting += 1
+                elif token == ')': nesting -= 1
+                elif nesting == 0 and pdn.MOVE.fullmatch(token) and token not in pdn.RESULTS:
+                    count += 1
+                    if count == wanted: insertion = i+1; break
+            document.tokens.insert(insertion, annotation)
+            Path(path).write_text(pdn.dumps([document]), encoding='utf-8')
+        self.start(work, lambda _: self.log.appendPlainText('Exported PDN with clearly labeled engine analysis'))
+
     def set_games(self, games):
+        self.pdn_document = None
         self._pending_replay = self.worker is not None
         self.games = games; self.game_selector.clear()
-        self.game_selector.addItems([f'{g.get("white", "White")} – {g.get("black", "Black")} {g.get("result", "*")}' for g in games])
+        self.game_selector.addItems([f'{g.get("event", "Game")} | {g.get("white", "White")} – {g.get("black", "Black")} {g.get("result", "*")}' + (' [ERROR]' if g.get('errors') else '') for g in games])
 
     def select_game(self, index):
         if 0 <= index < len(self.games):
+            game = self.games[index]
+            self.annotation_view.setPlainText('\n'.join(game.get('errors', [])) or (' '.join(self.pdn_document[index].tokens) if self.pdn_document else 'Canonical match replay'))
             self.slider.setRange(0, len(self.games[index]['moves'])); self.slider.setValue(0)
             if self.worker is None: self.replay_position(0)
 
@@ -412,8 +523,10 @@ class Window(QMainWindow):
         index = self.game_selector.currentIndex()
         if not 0 <= index < len(self.games) or self.worker is not None: return
         game = self.games[index]; referee = Referee(self.referee.text())
+        if game.get('errors'):
+            self.replay_label.setText('Cannot replay: ' + '; '.join(game['errors'])); return
         self.replay_label.setText(f'Ply {ply}/{len(game["moves"])} — {game.get("termination", "")}')
-        self.start(lambda emit: referee.inspect(game['fen'], game['moves'][:ply]),
+        self.start(lambda emit: referee.inspect(game['fen'], game['moves'][:ply], game.get('restrictions')),
                    lambda loaded: self.show_board(self.replay_board, loaded))
 
     def update_capabilities(self):

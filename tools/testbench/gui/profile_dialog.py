@@ -25,7 +25,11 @@ class ProfileDialog(QDialog):
 
     def browse(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Hub executable')
-        if path: self.fields['Executable'].setText(path)
+        if path:
+            self.fields['Executable'].setText(path)
+            if not self.fields['Working directory'].text():
+                from tools.testbench.launch import working_directory
+                self.fields['Working directory'].setText(working_directory(path))
 
     def accept(self):
         try:

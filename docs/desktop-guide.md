@@ -27,6 +27,11 @@ Repeated rounds from a deterministic starting position may repeat games.
 
 ## Analysis and position cases
 
+Use **Analysis → Paste / import FEN** to paste a position, or **Load FEN file**
+for a `.fen`/text file. You can also edit **Starting FEN** and press **Preview**.
+Import opens the Analysis tab and clears the earlier position's history,
+restriction counters and accepted moves before validating the new setup.
+
 Preview/import a FEN, set depth and analyze. Replay moves and explicit initial
 restriction JSON preserve state unavailable in FEN alone. Setup editing starts
 a new position and clears history. Legal moves can be selected explicitly;

@@ -8,6 +8,7 @@ import threading
 import time
 
 from .protocol import Message, ProtocolError, parse, serialize, validate_position
+from .launch import executable_path, working_directory
 
 
 class HubError(RuntimeError):
@@ -117,6 +118,12 @@ class HubSession:
             except queue.Empty as exc:
                 continue
             if isinstance(event, Exception):
+                if isinstance(event, EngineExited):
+                    for reader in self._readers: reader.join(timeout=0.1)
+                    diagnostics = [e['line'] for e in self.transcript if e['direction'] == 'stderr'][-5:]
+                    code = self._process.poll() if self._process else None
+                    raise EngineExited(f'{event}; exit={code}; cwd={working_directory(self.profile.executable, self.profile.cwd)}' +
+                                       ('; ' + ' | '.join(diagnostics) if diagnostics else ''))
                 raise event
             if not event.strip():
                 continue
@@ -145,8 +152,8 @@ class HubSession:
         self.cancel_event = cancel_event
         try:
             self._process = subprocess.Popen(
-                [self.profile.executable, *self.profile.arguments],
-                cwd=self.profile.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                [executable_path(self.profile.executable), *self.profile.arguments],
+                cwd=working_directory(self.profile.executable, self.profile.cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )

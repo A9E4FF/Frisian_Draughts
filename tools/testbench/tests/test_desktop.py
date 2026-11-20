@@ -113,5 +113,15 @@ class DesktopTests(unittest.TestCase):
             text = analysis.read_text(); self.assertIn('original', text); self.assertIn('Engine analysis (A)', text)
             checked = pdn.validate(pdn.loads(text)[0], Referee(engine)); self.assertEqual(checked.errors, [])
 
+    @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'),'real referee required')
+    def test_fen_import_is_visible_and_clears_previous_history(self):
+        w=self.window; w.referee.setText(os.environ['FRISIAN_TEST_ENGINE'])
+        w.replay_moves.setPlainText('31-26'); w.expected.setText('16-21')
+        w.restrictions.setText('{"white":{"square":28,"count":3}}')
+        w.apply_fen('W:WK28:B23'); self.settle()
+        self.assertEqual(w.replay_moves.toPlainText(),''); self.assertEqual(w.restrictions.text(),'{}')
+        self.assertEqual(w.board.get_pieces(),{28:'W',23:'b'})
+        self.assertEqual(w.tabs.currentIndex(),0)
+
 
 if __name__ == '__main__': unittest.main()

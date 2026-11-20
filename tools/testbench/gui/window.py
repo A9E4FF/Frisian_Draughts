@@ -107,6 +107,9 @@ class Window(QMainWindow):
         self.setup = QCheckBox('Edit a new setup (clears history)'); form.addRow(self.setup)
         self.setup.toggled.connect(self.setup_changed)
         row = QHBoxLayout(); form.addRow(row)
+        self.button(row, 'Paste / import FEN', self.import_fen)
+        self.button(row, 'Load FEN file', self.load_fen_file)
+        row = QHBoxLayout(); form.addRow(row)
         self.button(row, 'Preview', self.preview)
         self.button(row, 'Analyze', self.analyze)
         self.button(row, 'Flip', lambda: self.board.set_flipped(not self.board._flipped))
@@ -264,6 +267,25 @@ class Window(QMainWindow):
                 emit(loaded); return loaded
             self.start(work)
         except Exception as exc: self.error(str(exc))
+
+    def apply_fen(self, text):
+        # FEN describes a fresh setup, never the previous position's history.
+        text = text.strip()
+        if not text: return self.error('Paste a draughts FEN, for example W:W31-50:B1-20')
+        self._case_base = {}; self.fen.setText(text); self.replay_moves.clear()
+        self.restrictions.setText('{}'); self.expected.clear(); self.setup.setChecked(False)
+        self.tabs.setCurrentIndex(0); self.preview()
+
+    def import_fen(self):
+        text, accepted = QInputDialog.getMultiLineText(self, 'Import draughts FEN',
+            'Paste FEN (pieces and side to move; earlier history/counters start cleared):', QApplication.clipboard().text())
+        if accepted: self.apply_fen(text)
+
+    def load_fen_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Load one FEN position', '', 'FEN or text (*.fen *.txt);;All files (*)')
+        if path:
+            try: self.apply_fen(Path(path).read_text(encoding='utf-8-sig'))
+            except Exception as exc: self.error(str(exc))
 
     def analyze(self):
         try:

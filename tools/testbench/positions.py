@@ -10,10 +10,11 @@ from .session import EngineProfile, HubSession, HubTimeout
 
 
 class HubAnalysisSession:
-    def __init__(self, engine, referee, *, timeout=300, cwd=None):
+    def __init__(self, engine, referee, *, timeout=300, cwd=None, parameters=None):
         self.profile = engine if isinstance(engine, EngineProfile) else EngineProfile(str(engine), cwd=cwd)
         self.referee = referee if hasattr(referee, 'inspect') else Referee(str(referee))
         self.timeout = timeout
+        self.parameters = dict(parameters or {})
         self.cancelled = threading.Event()
 
     def cancel(self):
@@ -45,7 +46,7 @@ class HubAnalysisSession:
                     supports_state = 'frisian-state-v1' in peer.identity.get('extensions', '').split() if peer.identity else False
                     if encoded_state != '0:0,0:0' and not supports_state:
                         raise ValueError('engine cannot represent imported king restrictions; use replay from a cleared state or a supporting engine')
-                    params = {'variant': 'frisian', 'book': 'false', 'bb-size': 0, 'threads': 1}
+                    params = {'variant': 'frisian', 'book': 'false', 'bb-size': 0, 'threads': 1, **self.parameters}
                     if 'tt_megabytes' in case:
                         if 'tt-size' not in peer.parameters:
                             raise ValueError('engine does not expose requested TT memory setting')

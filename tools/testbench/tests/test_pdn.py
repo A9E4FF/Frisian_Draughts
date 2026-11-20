@@ -44,6 +44,30 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(restored.moves, games[1].moves)
         self.assertEqual(restored.errors, [])
 
+    @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'), 'real referee required')
+    def test_standard_multicapture_and_scan_dialects(self):
+        from tools.testbench.referee import Referee
+        referee = Referee(os.environ['FRISIAN_TEST_ENGINE'])
+        record = {'fen': 'W:W11:B7,8', 'moves': ['11x13x7x8'], 'result': '1-0'}
+        standard = pdn.from_record(record, referee)
+        self.assertIn('11x2x13', standard.tokens)
+        for dialect in ['standard', 'scan']:
+            exported = pdn.dumps([pdn.from_record(record, referee, dialect)])
+            restored = pdn.validate(pdn.loads(exported)[0], referee)
+            self.assertEqual(restored.errors, [])
+            self.assertEqual(restored.moves, record['moves'])
+
+    @unittest.skipUnless(os.environ.get('SCAN_GUI_SOURCE'), 'optional original Scan GUI compatibility check')
+    def test_scan_gui_parser_reads_exported_capture_identities(self):
+        import ast
+        from pathlib import Path
+        tree = ast.parse(Path(os.environ['SCAN_GUI_SOURCE']).read_text(encoding='utf-8'))
+        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ('parse_pdn_moves', 'scan_fen_to_hub', 'parse_pdn_games')]
+        scope = {}; exec(compile(ast.Module(functions, type_ignores=[]), '<Scan GUI parser>', 'exec'), scope)
+        record = {'fen': 'W:W11:B7,8', 'moves': ['11x13x7x8'], 'result': '1-0'}
+        text = pdn.dumps([pdn.from_record(record, dialect='scan')])
+        self.assertEqual(scope['parse_pdn_games'](text)[0]['moves'], record['moves'])
+
 
 if __name__ == '__main__':
     unittest.main()

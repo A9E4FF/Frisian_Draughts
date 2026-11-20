@@ -83,5 +83,35 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(len(json.loads((output / 'games.json').read_text())), 2)
         self.assertIn('adjudication-ply-limit', w.match_log.toPlainText())
 
+    def test_case_metadata_survives_editing_and_ambiguous_drag_is_rejected(self):
+        w = self.window
+        w.cases = [{'name': 'Case', 'fen': 'W:W31:B16', 'depth': 1,
+                    'tt_enabled': False, 'tt_megabytes': 2, 'accepted_moves': ['31-27']}]
+        w.select_case(0); w.notes.setText('edited')
+        self.assertFalse(w.current_case()['tt_enabled']); self.assertEqual(w.current_case()['tt_megabytes'], 2)
+        w.board.set_legal_moves([(49,47,(7,),'capture'), (49,47,(8,),'capture')])
+        self.assertIsNone(w.board._find_legal_move(49,47))
+
+    @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'), 'real referee required')
+    def test_pdn_import_export_replay_and_analysis_annotations(self):
+        from tools.testbench import pdn
+        from tools.testbench.referee import Referee
+        w = self.window; engine = os.environ['FRISIAN_TEST_ENGINE']
+        w.referee.setText(engine); w.engines = [entrant('A', engine)]; w.refresh_profiles(); w.depth.setValue(1)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'input.pdn'
+            source.write_text('[Event "Game"]\n[Result "*"]\n1. 31-26 {original} $1 (1. 32-28) 16-21 *', encoding='utf-8')
+            w.import_pdn(source); self.settle()
+            self.assertEqual(w.games[0]['errors'], [])
+            w.slider.setValue(1); self.settle()
+            self.assertIn(26, w.replay_board.get_pieces()); self.assertNotIn(31, w.replay_board.get_pieces())
+            output = Path(tmp) / 'output.pdn'; w.export_pdn(output, all_games=True); self.settle()
+            original = pdn.loads(source.read_text())[0]; restored = pdn.loads(output.read_text())[0]
+            self.assertEqual(original.tokens, restored.tokens)
+            w.analyze_replay(); self.settle()
+            analysis = Path(tmp) / 'analysis.pdn'; w.export_analysis_pdn(analysis); self.settle()
+            text = analysis.read_text(); self.assertIn('original', text); self.assertIn('Engine analysis (A)', text)
+            checked = pdn.validate(pdn.loads(text)[0], Referee(engine)); self.assertEqual(checked.errors, [])
+
 
 if __name__ == '__main__': unittest.main()

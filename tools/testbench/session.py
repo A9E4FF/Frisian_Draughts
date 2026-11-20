@@ -160,6 +160,7 @@ class HubSession:
             self._wait('wait', timeout)
             selected = parameters(self) if callable(parameters) else parameters
             for name, value in (selected or {}).items():
+                if isinstance(value, bool): value = str(value).lower()
                 self.send('set-param', [('name', name), ('value', value)])
             self.send('init')
             self._wait('ready', timeout)

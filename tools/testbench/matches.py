@@ -26,9 +26,10 @@ class Entrant:
     profile: EngineProfile
     parameters: dict
     revision: str | None = None
+    capabilities: tuple[str, ...] = ()
 
 
-def load_config(path):
+def load_config(path, *, min_engines=2):
     path = Path(path)
     data = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(data, dict) or data.get('version') != 1:
@@ -45,9 +46,9 @@ def load_config(path):
         if not isinstance(args, list) or not all(isinstance(s, str) for s in args) or not isinstance(params, dict):
             raise ValueError('invalid arguments/parameters')
         engines.append(Entrant(name, EngineProfile(absolute(engine['executable']), tuple(args),
-                       absolute(engine['cwd']) if engine.get('cwd') else None), params, engine.get('revision')))
-    if len(engines) < 2:
-        raise ValueError('at least two engine profiles are required')
+                       absolute(engine['cwd']) if engine.get('cwd') else None), params, engine.get('revision'), tuple(engine.get('capabilities', []))))
+    if len(engines) < min_engines:
+        raise ValueError(f'at least {min_engines} engine profiles are required')
     return engines
 
 

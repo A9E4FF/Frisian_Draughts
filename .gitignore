@@ -8,4 +8,8 @@ __pycache__/
 /local-*.json
 /rust-hub-probe.json
 /Cargo.lock.original
+/build/
+/dist/
+/desktop-smoke/
+/*.spec
 

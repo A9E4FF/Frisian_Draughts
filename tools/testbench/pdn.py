@@ -30,6 +30,15 @@ class Game:
     def fen(self):
         return self.tag('FEN', START)
 
+    @property
+    def result(self):
+        depth = 0; result = '*'
+        for token in self.tokens:
+            if token == '(': depth += 1
+            elif token == ')': depth -= 1
+            elif depth == 0 and token in RESULTS: result = token
+        return self.tag('Result', result)
+
 
 def loads(text):
     """Recover at the next header block; one malformed game cannot hide others."""
@@ -145,6 +154,10 @@ def validate(game, referee):
     """Validate mainline and every recursive variation, retaining all tokens."""
     if game.errors:
         return game
+    if game.tag('SetUp') == '1' and not game.tag('FEN'):
+        game.errors.append('SetUp=1 requires a FEN tag'); return game
+    if game.tag('GameType', '97').split(',')[0] != '97':
+        game.errors.append('This testbench validates Frisian GameType 97 only'); return game
     if game.tag('FrisianState'):
         game.errors.append('Imported project-specific state needs a canonical JSON report')
         return game

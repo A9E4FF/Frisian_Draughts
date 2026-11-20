@@ -1,5 +1,11 @@
 # Frisian Draughts
 
+The optional [unified desktop testbench](docs/desktop-guide.md) provides engine
+profiles, live paired matches, analysis, position suites, PDN import/export and
+validated replay. Launch with `python -m tools.testbench.gui`; Windows CI also
+builds a standalone ZIP containing the matching Rust engine and rules referee.
+The desktop stack is based on the integration branch containing stages 2–5.
+
 A Rust Frisian Draughts engine using Scan 3.1 as its rules and search reference.
 The terminal opponent uses iterative-deepening alpha-beta with capture quiescence
 and a small edge-aware evaluator. No opening books or external weights are used.

@@ -56,7 +56,7 @@ class HubAnalysisSession:
                         if 'tt-enabled' in peer.parameters:
                             params['tt-enabled'] = str(case['tt_enabled']).lower()
                     return params
-                session.start(parameters)
+                session.start(parameters, cancel_event=self.cancelled)
                 session.begin_search(start['hub'], moves=case.get('moves', []),
                                      restrictions=encoded_state if encoded_state != '0:0,0:0' else None,
                                      level=[('depth', case['depth'])], mode='analyze')

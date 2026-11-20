@@ -18,6 +18,10 @@ class HubTimeout(HubError):
     pass
 
 
+class HubCancelled(HubError):
+    pass
+
+
 class EngineExited(HubError):
     pass
 
@@ -52,6 +56,7 @@ class HubSession:
         self._process = None
         self._readers = []
         self._pending_done = None
+        self.cancel_event = None
         self.search_started = None
 
     @property
@@ -102,13 +107,15 @@ class HubSession:
             raise ValueError('timeout must be positive')
         deadline = time.monotonic() + timeout
         while True:
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                raise HubCancelled('engine operation cancelled')
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise HubTimeout(f'timed out waiting for {command}')
             try:
-                event = self._events.get(timeout=remaining)
+                event = self._events.get(timeout=min(0.1, remaining))
             except queue.Empty as exc:
-                raise HubTimeout(f'timed out waiting for {command}') from exc
+                continue
             if isinstance(event, Exception):
                 raise event
             if not event.strip():
@@ -132,9 +139,10 @@ class HubSession:
                     raise HubError(f'unexpected search result while waiting for {command}')
             # Ignore unknown commands as required by Hub v2.
 
-    def start(self, parameters=None, *, timeout=10):
+    def start(self, parameters=None, *, timeout=10, cancel_event=None):
         if self.state != 'new':
             raise HubError('session already started')
+        self.cancel_event = cancel_event
         try:
             self._process = subprocess.Popen(
                 [self.profile.executable, *self.profile.arguments],

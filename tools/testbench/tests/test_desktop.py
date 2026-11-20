@@ -50,6 +50,27 @@ class DesktopTests(unittest.TestCase):
         dialog = ProfileDialog(entrant('A', 'engine', parameters='{"threads":1}'))
         dialog.accept(); self.assertEqual(dialog.value.parameters, {'threads': 1}); dialog.close()
 
+    def test_worker_error_recovers_and_navigation_stays_available(self):
+        w = self.window
+        def failed(emit): raise ValueError('deliberate failure')
+        w.start(failed); self.assertTrue(w.tabs.isEnabled()); self.assertEqual(w.job_state, 'running')
+        self.assertFalse(w.start(lambda emit: None))
+        self.settle(); self.assertEqual(w.job_state, 'idle')
+        self.assertIn('deliberate failure', w.status.text())
+        values = []; w.start(lambda emit: 42, values.append); self.settle(); self.assertEqual(values, [42])
+
+    @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'), 'real engine required')
+    def test_cancel_restart_and_close_during_analysis(self):
+        w = self.window; engine = os.environ['FRISIAN_TEST_ENGINE']
+        w.engines = [entrant('A', engine)]; w.refresh_profiles(); w.referee.setText(engine)
+        w.depth.setValue(64); w.analyze(); w.cancel()
+        self.assertEqual(w.job_state, 'cancelling'); self.settle()
+        self.assertIn('CANCELLED', w.log.toPlainText())
+        w.fen.setText('W:W31:B16'); w.depth.setValue(1); w.analyze(); self.settle()
+        self.assertIn('ANALYSIS', w.log.toPlainText())
+        w.fen.setText('W:W31-50:B1-20'); w.depth.setValue(64); w.analyze(); w.close(); self.settle()
+        self.assertTrue(w._close_pending)
+
     @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'), 'real engine required')
     def test_live_match_workflow(self):
         engine = os.environ['FRISIAN_TEST_ENGINE']; w = self.window

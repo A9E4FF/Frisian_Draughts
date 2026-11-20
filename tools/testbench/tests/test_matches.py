@@ -28,7 +28,7 @@ class Peer:
     def __init__(self, profile):
         self.transcript = []
         self.search_started = None
-    def start(self, parameters):
+    def start(self, parameters, **kwargs):
         pass
     def send(self, command):
         pass

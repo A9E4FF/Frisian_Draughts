@@ -14,7 +14,7 @@ import threading
 
 from .protocol import ProtocolError
 from .referee import InvalidState, Referee, RefereeUnavailable
-from .session import EngineExited, EngineProfile, HubError, HubSession, HubTimeout
+from .session import EngineExited, EngineProfile, HubError, HubSession, HubTimeout, HubCancelled
 from . import pdn
 
 START = 'W:W31-50:B1-20'
@@ -123,7 +123,7 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
             session = session_factory(entrant.profile)
             sessions.append(session)
             session.start({'variant': 'frisian', 'book': 'false', 'bb-size': 0, 'threads': 1,
-                           **entrant.parameters})
+                           **entrant.parameters}, cancel_event=cancel)
             session.send('new-game')
         for ply in range(limits.max_plies + 1):
             if cancel is not None and cancel.is_set():
@@ -181,6 +181,8 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
                                     'remaining_clock': clocks[side]})
             state = referee.inspect(fen, moves)
             on_event({'type': 'position', 'state': state, 'moves': list(moves)})
+    except HubCancelled:
+        result.update(result='*', termination='user-cancelled')
     except (InvalidState, RefereeUnavailable) as exc:
         result.update(result='*', termination='referee-error', error=str(exc))
     except (HubTimeout, EngineExited, HubError, ProtocolError, OSError) as exc:

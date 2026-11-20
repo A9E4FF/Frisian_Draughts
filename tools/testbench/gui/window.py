@@ -48,6 +48,10 @@ class Window(QMainWindow):
         self.cases = []
         self.games = []
         self.worker = None
+        self.job_state = 'idle'
+        self.last_error = None
+        self._busy_widgets = []
+        self._pending_replay = False
         self.cancel_active = lambda: None
         self._close_pending = False
         self._move_signal = False
@@ -160,8 +164,12 @@ class Window(QMainWindow):
         if self.worker is not None:
             return False
         self._completed = completed
+        self.job_state = 'running'; self.last_error = None
         self.cancel_active = cancel or (lambda: None)
-        self.tabs.setEnabled(False); self.engine.setEnabled(False); self.referee.setEnabled(False)
+        self._busy_widgets = [(w, w.isEnabled()) for w in self.findChildren(QWidget)
+            if isinstance(w, (QPushButton, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QSlider, BoardWidget)) and w is not self.cancel_button]
+        for widget, _ in self._busy_widgets: widget.setEnabled(False)
+        self.replay_moves.setReadOnly(True)
         self.cancel_button.setEnabled(True); self.status.setText('Working…')
         self.worker = Task(function, self)
         self.worker.event.connect(self.on_event); self.worker.result.connect(self.on_result)
@@ -177,12 +185,19 @@ class Window(QMainWindow):
     @Slot()
     def idle(self):
         self.worker.deleteLater(); self.worker = None
-        self.tabs.setEnabled(True); self.engine.setEnabled(True); self.referee.setEnabled(True)
-        self.cancel_button.setEnabled(False); self.status.setText('Ready'); self.cancel_active = lambda: None
+        self.job_state = 'idle'
+        for widget, enabled in self._busy_widgets: widget.setEnabled(enabled)
+        self._busy_widgets = []
+        self.replay_moves.setReadOnly(False)
+        self.cancel_button.setEnabled(False); self.status.setText(self.last_error or 'Ready'); self.cancel_active = lambda: None
         if self._close_pending: self.close()
+        elif self._pending_replay:
+            self._pending_replay = False
+            self.replay_position(self.slider.value())
 
     @Slot(str)
     def error(self, message):
+        self.last_error = message
         self.log.appendPlainText('ERROR: ' + message)
         self.status.setText(message)
 
@@ -261,7 +276,8 @@ class Window(QMainWindow):
         if self.moves.currentText(): self.append_move(self.moves.currentText())
 
     def cancel(self):
-        self.cancel_active(); self.status.setText('Cancelling…')
+        if self.worker is not None:
+            self.job_state = 'cancelling'; self.cancel_active(); self.status.setText('Cancelling…')
 
     def load_profiles(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Engine profiles', '', 'JSON (*.json)')
@@ -383,6 +399,7 @@ class Window(QMainWindow):
             except Exception as exc: self.error(str(exc))
 
     def set_games(self, games):
+        self._pending_replay = self.worker is not None
         self.games = games; self.game_selector.clear()
         self.game_selector.addItems([f'{g.get("white", "White")} – {g.get("black", "Black")} {g.get("result", "*")}' for g in games])
 

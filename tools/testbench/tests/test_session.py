@@ -4,12 +4,25 @@ import unittest
 
 from tools.testbench.protocol import ProtocolError
 from tools.testbench.session import EngineExited, EngineProfile, HubError, HubSession, HubTimeout
+from tools.testbench.session import HubCancelled
+import threading
 
 FAKE = str(Path(__file__).with_name('fake_engine.py'))
 INITIAL = 'W' + 'b' * 20 + 'e' * 10 + 'w' * 20
 
 
 class SessionTests(unittest.TestCase):
+    def test_handshake_can_be_cancelled_and_process_is_reaped(self):
+        cancel = threading.Event()
+        session = HubSession(EngineProfile(sys.executable, (FAKE, 'misleading-handshake')))
+        timer = threading.Timer(0.05, cancel.set); timer.start()
+        try:
+            with self.assertRaises(HubCancelled):
+                session.start(timeout=10, cancel_event=cancel)
+            self.assertEqual(session.state, 'closed')
+            self.assertIsNotNone(session._process.poll())
+        finally:
+            timer.join(); session.close()
     def session(self, scenario='normal', **kwargs):
         session = HubSession(EngineProfile(sys.executable, (FAKE, scenario)), **kwargs)
         self.addCleanup(session.close)

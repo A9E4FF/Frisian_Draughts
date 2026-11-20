@@ -4,9 +4,10 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+import threading
 
 from tools.testbench.matches import (Entrant, MatchLimits, canonical_move, load_config,
-                                    play_game, save_reports, schedule)
+                                    play_game, save_reports, schedule, run_tournament)
 from tools.testbench.protocol import parse
 from tools.testbench.referee import Referee, RefereeUnavailable
 from tools.testbench.session import EngineExited, EngineProfile
@@ -40,6 +41,21 @@ class Peer:
 
 
 class MatchTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'), 'real engine integration is opt-in')
+    def test_shared_tournament_progress_cancel_and_reports(self):
+        engine = os.environ['FRISIAN_TEST_ENGINE']
+        entrants = [Entrant(name, EngineProfile(engine), {}) for name in ['A', 'B']]
+        cancel = threading.Event(); events = []
+        def progress(event):
+            events.append(event)
+            if event['type'] == 'thinking': cancel.set()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'reports'
+            games = run_tournament(entrants, Referee(engine), MatchLimits(depth=12), cancel=cancel, on_event=progress, output=output)
+            self.assertTrue(all(g['termination'] == 'user-cancelled' for g in games))
+            self.assertEqual(len(json.loads((output / 'games.json').read_text())), 2)
+        self.assertTrue(any(e['type'] == 'thinking' for e in events))
+        self.assertEqual(sum(e['type'] == 'game-finished' for e in events), 2)
     def test_paired_schedule_and_master(self):
         third = Entrant('Other', EngineProfile('unused'), {})
         self.assertEqual(schedule([WHITE, BLACK], 2), [(0, 1), (1, 0), (0, 1), (1, 0)])

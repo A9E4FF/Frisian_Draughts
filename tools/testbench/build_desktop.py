@@ -17,11 +17,24 @@ def main():
         '--distpath', str(root/'dist'), '--workpath', str(root/'build/desktop'),
         '--specpath', str(root/'build'), str(root/'tools/testbench/desktop.py')], cwd=root, check=True)
     destination = root/'dist/FrisianDraughtsTestbench'
+    # Qt uses Windows' ICU API. On developer machines PyInstaller can resolve
+    # the same DLL name from Git/other PATH tools, with incompatible exports.
+    # Do not redistribute that substitute for an OS library.
+    system_icu_substitute = destination/'_internal/icuuc.dll'
+    if system_icu_substitute.is_file(): system_icu_substitute.unlink()
     (destination/'engines').mkdir(exist_ok=True)
     shutil.copy2(engine, destination/'engines/frisian-draughts.exe')
     shutil.copy2(root/'license.txt', destination)
     shutil.copy2(root/'docs/desktop-guide.md', destination/'README.md')
     shutil.copy2(root/'tools/testbench/gui/NOTICE.md', destination)
+    from importlib.metadata import distribution
+    for name in ['PySide6', 'PySide6_Essentials', 'shiboken6', 'pyinstaller']:
+        package = distribution(name)
+        for file in package.files or []:
+            if 'licenses' in file.parts and package.locate_file(file).is_file():
+                target = destination/'THIRD_PARTY_LICENSES'/name/Path(*file.parts[file.parts.index('licenses')+1:])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(package.locate_file(file), target)
     shutil.copytree(root/'tools/testbench/examples', destination/'examples', dirs_exist_ok=True)
     from PySide6 import __version__ as qt_version
     import PyInstaller

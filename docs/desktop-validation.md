@@ -14,6 +14,10 @@ Local Windows checks on 2026-11-20:
 - Visual inspection of the offscreen Windows UI. Added a fallback for offscreen
   systems with an empty font database, loading installed Windows fonts without
   redistributing them.
+- Standalone Windows launch, two real paired games and exported PDN replay
+  passed after excluding a conflicting ICU DLL collected from the developer's
+  PATH. Qt uses the operating system's ICU API instead. Added Linux EGL/OpenGL
+  packages to support the offscreen Qt job on minimal CI images.
 
 Local tests use the existing release executable. CI rebuilds Rust from the
 committed lockfile, retains the independent Scan differential tests, runs Qt

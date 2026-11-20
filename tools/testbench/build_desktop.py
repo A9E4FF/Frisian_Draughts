@@ -36,6 +36,12 @@ def main():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(package.locate_file(file), target)
     shutil.copytree(root/'tools/testbench/examples', destination/'examples', dirs_exist_ok=True)
+    # Source examples resolve against the checkout; distribution examples must
+    # resolve against the extracted folder instead.
+    bundled_profiles = {'version': 1, 'engines': [
+        {'name': name, 'executable': '../engines/frisian-draughts.exe'}
+        for name in ['Rust A (smoke test)', 'Rust B (same build)']]}
+    (destination/'examples/engines.json').write_text(json.dumps(bundled_profiles, indent=2), encoding='utf-8')
     from PySide6 import __version__ as qt_version
     import PyInstaller
     revision = os.environ.get('GITHUB_SHA', 'local development build')

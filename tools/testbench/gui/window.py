@@ -6,6 +6,7 @@ import sys
 import threading
 
 from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtGui import QFontDatabase, QFont
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSlider,
@@ -43,9 +44,16 @@ class Task(QThread):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Qt's offscreen Windows platform may expose no system fonts. Register
+        # installed fonts as a fallback; no Windows fonts are redistributed.
+        if sys.platform == 'win32' and not QFontDatabase.families():
+            for filename in ['segoeui.ttf', 'arial.ttf']:
+                QFontDatabase.addApplicationFont(str(Path('C:/Windows/Fonts') / filename))
+            QApplication.instance().setFont(QFont('Segoe UI', 9))
+        default_engine = Path(sys.executable).parent / 'engines' / 'frisian-draughts.exe' if getattr(sys, 'frozen', False) else DEFAULT_ENGINE
         self.setWindowTitle('Frisian Draughts Testbench')
         self.resize(1280, 850)
-        self.engines = [Entrant('Rust', EngineProfile(str(DEFAULT_ENGINE)), {})]
+        self.engines = [Entrant('Rust', EngineProfile(str(default_engine)), {})]
         self.cases = []
         self.games = []
         self.worker = None
@@ -68,7 +76,7 @@ class Window(QMainWindow):
         self.button(row, 'Edit engine', self.edit_engine)
         self.button(row, 'Test Hub', self.test_engine)
         self.button(row, 'Save profiles', self.save_profiles)
-        self.referee = QLineEdit(str(DEFAULT_ENGINE)); row.addWidget(QLabel('Rules engine')); row.addWidget(self.referee)
+        self.referee = QLineEdit(str(default_engine)); row.addWidget(QLabel('Rules engine')); row.addWidget(self.referee)
         self.button(row, 'Browse', self.browse_referee)
         self.tabs = QTabWidget(); outer.addWidget(self.tabs)
         self.make_analysis(); self.make_cases(); self.make_matches(); self.make_replay()
@@ -131,16 +139,19 @@ class Window(QMainWindow):
         self.parallel = QSpinBox(); self.parallel.setRange(1, 32)
         form.addRow('Response watchdog (seconds, not a clock)', self.watchdog); form.addRow('Simultaneous games', self.parallel)
         self.control = QComboBox(); self.control.addItems(['Depth', 'Move time', 'Fischer clock'])
+        self.match_depth = QSpinBox(); self.match_depth.setRange(1, 64); self.match_depth.setValue(self.depth.value())
+        self.match_depth.valueChanged.connect(self.depth.setValue); self.depth.valueChanged.connect(self.match_depth.setValue)
+        form.addRow('Search depth (plies)', self.match_depth)
         self.budget = QDoubleSpinBox(); self.budget.setRange(0.01, 86400); self.budget.setValue(1)
         self.increment = QDoubleSpinBox(); self.increment.setRange(0, 3600)
         self.rounds = QSpinBox(); self.rounds.setRange(1, 10000)
         self.ply_cap = QSpinBox(); self.ply_cap.setRange(1, 10000); self.ply_cap.setValue(200)
         self.output = QLineEdit('match-results')
-        for label, field in [('Control (depth uses analysis depth)', self.control), ('Time / initial clock (seconds)', self.budget),
+        for label, field in [('Control', self.control), ('Time / initial clock (seconds)', self.budget),
                              ('Increment (seconds)', self.increment), ('Paired rounds', self.rounds),
                              ('Adjudication ply cap', self.ply_cap), ('New report directory', self.output)]:
             form.addRow(label, field)
-        row = QHBoxLayout(); form.addRow(row); self.button(row, 'Run all paired matches', self.run_matches)
+        row = QHBoxLayout(); form.addRow(row); self.button(row, 'Run paired matches', self.run_matches)
         self.match_log = QPlainTextEdit(); self.match_log.setReadOnly(True); form.addRow(self.match_log)
         self.match_board = BoardWidget(); self.match_board.setMinimumSize(300, 300); self.match_board.setEnabled(False); live_layout.addWidget(self.match_board)
         self.live = QLabel('Waiting for a match'); self.live.setWordWrap(True); live_layout.addWidget(self.live)
@@ -428,6 +439,7 @@ class Window(QMainWindow):
         referee = Referee(self.referee.text()); cancel = threading.Event()
         def work(emit):
             documents = pdn.loads(Path(path).read_text(encoding='utf-8-sig'))
+            if not documents: raise ValueError('No PDN games found')
             for index, document in enumerate(documents, 1):
                 if cancel.is_set():
                     document.errors.append('Import cancelled'); continue
@@ -437,7 +449,7 @@ class Window(QMainWindow):
             return documents
         def completed(documents):
             games = [{'fen': g.fen, 'moves': list(g.moves), 'white': g.tag('White', '?'),
-                'black': g.tag('Black', '?'), 'event': g.tag('Event', '?'), 'result': g.tag('Result', '*'),
+                'black': g.tag('Black', '?'), 'event': g.tag('Event', '?'), 'result': g.result,
                 'errors': list(g.errors), 'termination': 'PDN import'} for g in documents]
             self.set_games(games); self.pdn_document = documents
             index = self.game_selector.currentIndex()

@@ -25,20 +25,7 @@ from .models import board_fen, load_replay, move_tuple
 from tools.testbench import pdn
 
 
-class Task(QThread):
-    event = Signal(object)
-    result = Signal(object)
-    failed = Signal(str)
-
-    def __init__(self, function, parent=None):
-        super().__init__(parent)
-        self.function = function
-
-    def run(self):
-        try:
-            self.result.emit(self.function(self.event.emit))
-        except Exception as exc:
-            self.failed.emit(str(exc))
+from .task import Task
 
 
 class Window(QMainWindow):

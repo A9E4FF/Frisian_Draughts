@@ -1,0 +1,63 @@
+name: ScanGraphic release
+on:
+  workflow_dispatch:
+    inputs:
+      scan_source_url:
+        description: URL of ScanGraphic-source.zip from the supplied source distribution
+        required: true
+        type: string
+      scan_source_sha256:
+        description: SHA-256 of that source ZIP
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      FRISIAN_QT_TESTS: '1'
+      FRISIAN_TEST_ENGINE: ${{ github.workspace }}/target/release/frisian-draughts.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-gcc
+      - run: cargo build --release --locked
+      - run: python -m pip install -r tools/testbench/requirements-build.txt
+      - run: python -W error::ResourceWarning -m unittest discover -s tools/testbench/tests -v
+      - name: Fetch exact supplied Scan source
+        shell: pwsh
+        env:
+          SCAN_SOURCE_URL: ${{ inputs.scan_source_url }}
+          SCAN_SOURCE_SHA: ${{ inputs.scan_source_sha256 }}
+        run: |
+          Invoke-WebRequest -Uri $env:SCAN_SOURCE_URL -OutFile scan-source.zip
+          if ((Get-FileHash scan-source.zip -Algorithm SHA256).Hash.ToLower() -ne $env:SCAN_SOURCE_SHA.ToLower()) { throw 'Scan source checksum mismatch' }
+          Expand-Archive scan-source.zip scan-source
+      - name: Build integrated release
+        shell: pwsh
+        run: python -m tools.testbench.build_scan_graphic --source scan-source --compiler C:/msys64/mingw64/bin/g++.exe
+      - name: Test packaged release
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $process = Start-Process -FilePath "$pwd/dist/ScanGraphic/ScanGraphic.exe" -ArgumentList @('--smoke-test', '--smoke-output', "$pwd/scan-smoke") -WindowStyle Hidden -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw 'Packaged ScanGraphic failed' }
+          if (!(Get-Content scan-smoke/passed.json | ConvertFrom-Json).passed) { throw 'Packaged smoke failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScanGraphic-0.1.0-Windows-x64
+          path: dist/ScanGraphic-0.1.0-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ScanGraphic-diagnostics
+          path: |
+            scan-smoke/
+            dist/ScanGraphic/startup-error.txt

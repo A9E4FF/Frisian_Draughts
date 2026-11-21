@@ -78,5 +78,25 @@ class MatchPanelTests(unittest.TestCase):
             self.assertIsNone(panel.worker); self.assertTrue(panel.settings.isEnabled())
             self.assertTrue(all(g['termination'] == 'user-cancelled' for g in panel.games))
 
+    def test_imported_pdn_retains_annotations_and_variations(self):
+        from unittest.mock import patch
+        from tools.testbench.gui.matches_panel import MatchesPanel
+        engine = os.environ['FRISIAN_TEST_ENGINE']
+        panel = MatchesPanel([Entrant(n, EngineProfile(engine), {}) for n in ['A', 'B']], engine)
+        self.addCleanup(panel.close)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)/'input.pdn'; output = Path(tmp)/'output.pdn'
+            source.write_text('[Event "Annotated"]\n[Result "*"]\n1. 31-26 {keep comment} $1 (1. 32-28) 16-21 *', encoding='utf-8')
+            panel.load_pdn(source)
+            deadline = time.monotonic() + 30
+            while panel.worker is not None and time.monotonic() < deadline:
+                self.app.processEvents(); time.sleep(.005)
+            self.assertIsNone(panel.worker); self.assertIsNone(panel.last_error)
+            opened = []; panel.open_game.connect(opened.append); panel.analyze_selected()
+            self.assertEqual(opened[0]['moves'], ['31-26', '16-21'])
+            with patch('tools.testbench.gui.matches_panel.QFileDialog.getSaveFileName', return_value=(str(output), '')): panel.export_pdn()
+            before, after = pdn.loads(source.read_text())[0], pdn.loads(output.read_text())[0]
+            self.assertEqual((before.tags, before.tokens), (after.tags, after.tokens))
+
 
 if __name__ == '__main__': unittest.main()

@@ -17,14 +17,18 @@ class StartPositions(QWidget):
         super().__init__(parent)
         self.positions = [model.position()]
         layout = QVBoxLayout(self); layout.addWidget(QLabel('Start positions — checked entries run in list order'))
-        self.list = QListWidget(); self.list.setMaximumHeight(130); layout.addWidget(self.list)
+        self.list = QListWidget(); self.list.setMinimumHeight(130); layout.addWidget(self.list)
         self.list.itemChanged.connect(self.checked)
         row = QHBoxLayout(); layout.addLayout(row)
         for text, callback in [('Add', self.add), ('Edit', self.edit), ('Delete', self.delete),
-            ('↑', lambda: self.move(-1)), ('↓', lambda: self.move(1)), ('Preview', self.show_preview)]: self.button(row, text, callback)
+            ('↑', lambda: self.move(-1)), ('↓', lambda: self.move(1)), ('Preview', self.show_preview)]:
+            self.button(row, text, callback)
+            if text == 'Delete': row = QHBoxLayout(); layout.addLayout(row)
         row = QHBoxLayout(); layout.addLayout(row)
         for text, callback in [('Import TXT / FEN', self.import_file), ('Paste list', self.paste),
-            ('Load collection', self.load), ('Save collection', self.save)]: self.button(row, text, callback)
+            ('Load collection', self.load), ('Save collection', self.save)]:
+            self.button(row, text, callback)
+            if text == 'Paste list': row = QHBoxLayout(); layout.addLayout(row)
         self.refresh()
 
     @staticmethod

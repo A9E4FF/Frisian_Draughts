@@ -20,6 +20,14 @@ from . import pdn
 START = 'W:W31-50:B1-20'
 
 
+class UnsupportedStart(ValueError):
+    pass
+
+
+def statestring(state):
+    return ','.join(f"{state[side]['square']}:{state[side]['count']}" if state.get(side) else '0:0' for side in ('white', 'black'))
+
+
 @dataclass(frozen=True)
 class Entrant:
     name: str
@@ -104,26 +112,35 @@ def canonical_move(text, legal_moves):
         return None
 
 
-def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSession, cancel=None, on_event=lambda event: None):
+def play_game(white, black, referee, limits, *, fen=START, initial_moves=(), restrictions=None, session_factory=HubSession, cancel=None, on_event=lambda event: None):
     entrants = [white, black]
     sessions = []
-    moves = []
+    moves = list(initial_moves)
+    restrictions = restrictions or {}
+    encoded_state = statestring(restrictions)
     clocks = [limits.clock, limits.clock]
     result = {'white': white.name, 'black': black.name, 'fen': fen, 'moves': moves,
-              'result': '*', 'termination': 'unfinished', 'plies': [], 'transcripts': {}}
+              'result': '*', 'termination': 'unfinished', 'plies': [], 'transcripts': {},
+              'initial_moves': list(initial_moves), 'restrictions': restrictions}
     side = None
     if cancel is not None and cancel.is_set():
         result['termination'] = 'user-cancelled'
         return result
     try:
-        state = referee.inspect(fen)
-        initial = state['hub']
-        on_event({'type': 'position', 'state': state, 'moves': []})
+        def inspect(history=()):
+            return referee.inspect(fen, history, restrictions) if restrictions else referee.inspect(fen, history)
+        initial = inspect()['hub']
+        state = inspect(moves)
+        on_event({'type': 'position', 'state': state, 'moves': list(moves)})
         for side, entrant in enumerate(entrants):
             session = session_factory(entrant.profile)
             sessions.append(session)
-            session.start({'variant': 'frisian', 'book': 'false', 'bb-size': 0, 'threads': 1,
-                           **entrant.parameters}, cancel_event=cancel)
+            parameters = {'variant': 'frisian', 'book': 'false', 'bb-size': 0, 'threads': 1, **entrant.parameters}
+            def checked_parameters(peer):
+                if 'frisian-state-v1' not in peer.identity.get('extensions', '').split():
+                    raise UnsupportedStart('engine cannot represent imported king restrictions; use replay from a cleared root')
+                return parameters
+            session.start(checked_parameters if encoded_state != '0:0,0:0' else parameters, cancel_event=cancel)
             session.send('new-game')
         for ply in range(limits.max_plies + 1):
             if cancel is not None and cancel.is_set():
@@ -149,7 +166,8 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
             else:
                 budget = None
                 level = [('depth', limits.depth)]
-            session.begin_search(initial, moves=moves, level=level)
+            extra = {'restrictions': encoded_state} if encoded_state != '0:0,0:0' else {}
+            session.begin_search(initial, moves=moves, level=level, **extra)
             on_event({'type': 'thinking', 'engine': entrants[side].name, 'ply': ply})
             started = session.search_started
             timeout = limits.response_timeout if budget is None else max(0.001, budget + limits.clock_margin)
@@ -179,8 +197,10 @@ def play_game(white, black, referee, limits, *, fen=START, session_factory=HubSe
             moves.append(move)
             result['plies'].append({'move': move, 'seconds': elapsed,
                                     'remaining_clock': clocks[side]})
-            state = referee.inspect(fen, moves)
+            state = inspect(moves)
             on_event({'type': 'position', 'state': state, 'moves': list(moves)})
+    except UnsupportedStart as exc:
+        result.update(result='*', termination='unsupported-start-state', error=str(exc))
     except HubCancelled:
         result.update(result='*', termination='user-cancelled')
     except (InvalidState, RefereeUnavailable) as exc:
@@ -203,9 +223,9 @@ def save_reports(directory, games, manifest):
     (directory / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     (directory / 'games.json').write_text(json.dumps(games, indent=2) + '\n', encoding='utf-8')
     with (directory / 'results.csv').open('w', newline='', encoding='utf-8') as out:
-        writer = csv.DictWriter(out, fieldnames=['white', 'black', 'result', 'termination'])
+        writer = csv.DictWriter(out, fieldnames=['white', 'black', 'position_id', 'position_name', 'result', 'termination'])
         writer.writeheader()
-        writer.writerows({k: game[k] for k in writer.fieldnames} for game in games)
+        writer.writerows({k: game.get(k, '') for k in writer.fieldnames} for game in games)
     (directory / 'games.pdn').write_text(pdn.dumps([pdn.from_record(g, dialect='scan') for g in games]), encoding='utf-8')
 
 
@@ -219,22 +239,30 @@ def manifest_for(engines, referee, limits, rounds=1):
 
 
 def run_tournament(engines, referee, limits, *, rounds=1, parallel=1, master=None,
-                   cancel=None, on_event=lambda event: None, output=None):
+                   cancel=None, on_event=lambda event: None, output=None, positions=None):
     if rounds < 1 or parallel < 1 or len(engines) < 2:
         raise ValueError('positive rounds/parallel and two engines required')
     if master is not None and master not in [e.name for e in engines]:
         raise ValueError('unknown master engine')
     if output is not None and Path(output).exists():
         raise ValueError('choose a new report directory')
+    from . import start_positions as starts
+    selected = [starts.check(p) for p in positions if p.get('enabled')] if positions is not None else [starts.position()]
+    if not selected: raise ValueError('Enable at least one start position')
+    if len({p['id'] for p in selected}) != len(selected): raise ValueError('Duplicate start position IDs')
+    if positions is not None:
+        for item in selected: starts.validate(item, referee)
     manifest = manifest_for(engines, referee, limits, rounds)
+    manifest['positions'] = selected
     cancel = cancel or threading.Event()
-    pairs = schedule(engines, rounds, master)
+    pairs = [(a, b, item) for item in selected for a, b in schedule(engines, rounds, master)]
     def run(item):
-        number, (a, b) = item
+        number, (a, b, position) = item
         def progress(event):
-            on_event({**event, 'game': number, 'total': len(pairs)})
+            on_event({**event, 'game': number, 'total': len(pairs), 'position_id': position['id'], 'position_name': position['name']})
         progress({'type': 'game-started', 'white': engines[a].name, 'black': engines[b].name})
-        game = play_game(engines[a], engines[b], referee, limits, cancel=cancel, on_event=progress)
+        game = play_game(engines[a], engines[b], referee, limits, fen=position['fen'], initial_moves=position['moves'], restrictions=position['restrictions'], cancel=cancel, on_event=progress)
+        game.update(position_id=position['id'], position_name=position['name'])
         progress({'type': 'game-finished', 'record': game})
         return game
     with ThreadPoolExecutor(max_workers=parallel) as pool:

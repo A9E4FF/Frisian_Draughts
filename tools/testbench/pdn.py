@@ -260,6 +260,8 @@ def from_record(record, referee=None, dialect='standard'):
             ('Black', record.get('black', 'Black')), ('Result', record.get('result', '*')),
             ('GameType', '97'), ('SetUp', '1'), ('FEN', record.get('fen', START)),
             ('Termination', record.get('termination', 'unfinished'))]
+    if record.get('position_id'):
+        tags.extend([('StartPositionId', record['position_id']), ('StartPosition', record.get('position_name', '')), ('InitialPly', str(len(record.get('initial_moves', []))))])
     if record.get('restrictions'):
         tags.append(('FrisianState', 'See canonical JSON report'))
     game = Game(tags)

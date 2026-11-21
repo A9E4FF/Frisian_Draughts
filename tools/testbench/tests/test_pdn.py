@@ -21,6 +21,12 @@ class DocumentTests(unittest.TestCase):
         game = pdn.from_record({'fen': 'B:WK28:B23', 'moves': ['23x32x28'], 'result': '*'})
         self.assertEqual(game.tokens[0], '1...')
         self.assertIn('{[%hub 23x32x28]}', game.tokens)
+        self.assertEqual(pdn.loads('1. 31-26 16-21 1-0')[0].result, '1-0')
+
+    def test_missing_setup_and_other_variants_are_explicit(self):
+        for tags in [[('SetUp', '1')], [('GameType', '20')]]:
+            game = pdn.validate(pdn.Game(tags), None)
+            self.assertTrue(game.errors)
 
     def test_ambiguous_capture_never_guessed(self):
         state = {'legal_moves': ['49x47x7x11', '49x47x8x12'], 'pieces': [], 'turn': 'white'}

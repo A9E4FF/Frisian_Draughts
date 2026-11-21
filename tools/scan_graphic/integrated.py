@@ -13,7 +13,7 @@ from .main_window import MainWindow
 class IntegratedWindow(MainWindow):
     def __init__(self, scan, work_dir, rust):
         super().__init__(str(scan), str(work_dir))
-        self.setWindowTitle('ScanGraphic — Frisian Draughts 0.1.0')
+        self.setWindowTitle('ScanGraphic — Frisian Draughts 0.1.1')
         self.resize(1400, 900)
         self._close_pending = False
         self._analysis_visibility = {}

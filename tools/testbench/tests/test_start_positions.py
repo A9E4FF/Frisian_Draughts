@@ -5,6 +5,20 @@ from tools.testbench import start_positions as starts
 
 
 class StartPositionTests(unittest.TestCase):
+    def test_known_openings_prepare_without_mutating_input_or_history(self):
+        original = starts.position('Saved', 'B:W31:B1:H0:F6:+0+0', moves=['1-6'], restrictions={'white': None})
+        prepared = starts.prepare(original)
+        self.assertEqual(prepared['fen'], 'B:W31:B1')
+        self.assertEqual(prepared['original_fen'], original['fen'])
+        self.assertEqual(prepared['legacy_fields'], ['H0', 'F6', '+0+0'])
+        self.assertEqual(prepared['moves'], original['moves'])
+        self.assertEqual(prepared['restrictions'], original['restrictions'])
+        self.assertEqual(prepared['id'], original['id'])
+        self.assertTrue(original['fen'].endswith('+0+0'))
+        for suffix in ['H1:F6:+0+0', 'H0:F6:+1+0', 'H0:F0:+0+0', 'H0:F6:+0+0:unknown']:
+            with self.assertRaises(ValueError): starts.prepare(starts.position(fen='B:W31:B1:'+suffix))
+        with self.assertRaises(ValueError): starts.prepare(starts.position(fen='B:WK31:B1:H0:F6:+0+0'))
+
     def test_original_saved_list_explicit_conversion_retains_full_fen(self):
         original = starts.original_tool_positions()
         self.assertEqual(len(original), 6)

@@ -32,7 +32,7 @@ class StartPositions(QWidget):
         row = QHBoxLayout(); layout.addLayout(row)
         self.button(row, 'Add original tool list (6)', self.original_tool)
         self.button(row, 'Use as fresh setups', self.fresh_setups)
-        note = QLabel('Fresh setups clear extended history fields; original FENs are retained.'); note.setWordWrap(True); layout.addWidget(note)
+        note = QLabel('Original saved openings work directly. Fresh setup conversion is only for other unsupported state.'); note.setWordWrap(True); layout.addWidget(note)
         self.refresh()
 
     def original_tool(self):

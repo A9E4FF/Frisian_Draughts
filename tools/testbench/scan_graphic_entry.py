@@ -1,4 +1,4 @@
-"""Launch the integrated ScanGraphic 0.1.0 desktop and packaged regression smoke."""
+"""Launch the integrated ScanGraphic 0.1.1 desktop and packaged regression smoke."""
 import argparse
 import json
 from pathlib import Path
@@ -23,7 +23,7 @@ def main():
     for file in (scan, rust):
         if not file.is_file(): raise RuntimeError(f'Missing bundled engine: {file.name}')
     app = QApplication([])
-    app.setApplicationName('ScanGraphic'); app.setApplicationVersion('0.1.0')
+    app.setApplicationName('ScanGraphic'); app.setApplicationVersion('0.1.1')
     if sys.platform == 'win32' and not QFontDatabase.families():
         for font in ['segoeui.ttf', 'arial.ttf']: QFontDatabase.addApplicationFont(str(Path('C:/Windows/Fonts')/font))
         app.setFont(QFont('Segoe UI', 9))
@@ -47,7 +47,7 @@ def main():
         panel.depth.setValue(1); panel.ply_cap.setValue(4)
         panel.starts.import_text('B:W31-50:B1-20')
         from tools.testbench import start_positions
-        panel.starts.positions.extend(start_positions.fresh_setups(start_positions.original_tool_positions())); panel.starts.refresh()
+        panel.starts.positions.extend(start_positions.original_tool_positions()); panel.starts.refresh()
         panel.output.setText(str(args.smoke_output/'matches'))
         phase = ['analysis']
         def finish(error=None):

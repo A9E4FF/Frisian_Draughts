@@ -51,6 +51,9 @@ class MatchesPanel(QWidget):
             ('Simultaneous games', self.parallel), ('Maximum plies', self.ply_cap),
             ('Response watchdog (seconds)', self.watchdog), ('New report directory', self.output)]: form.addRow(name, field)
         self.extra_settings = QVBoxLayout(); form.addRow(self.extra_settings)
+        from .start_positions import StartPositions
+        self.starts = StartPositions(); self.extra_settings.addWidget(self.starts)
+        self.starts.error.connect(self.error); self.starts.preview.connect(self.preview_start)
         self.run_button = QPushButton('Run paired matches'); self.run_button.clicked.connect(self.run_matches); form.addRow(self.run_button)
         view = QVBoxLayout(); root.addLayout(view, 2)
         self.board = BoardWidget(); self.board.setEnabled(False); view.addWidget(self.board, 2)
@@ -96,6 +99,14 @@ class MatchesPanel(QWidget):
         if path:
             try: save_profiles(path, self.engines)
             except Exception as exc: self.error(str(exc))
+
+    def preview_start(self, item):
+        try:
+            from tools.testbench.start_positions import validate
+            state = validate(item, Referee(self.referee.text()))
+            self.board.set_position({int(k): v for k, v in state['pieces'].items()}, 'W' if state['turn'] == 'white' else 'B')
+            self.status.setText(f"{item['name']}: {state['outcome']}, {len(state['legal_moves'])} legal moves")
+        except Exception as exc: self.error(str(exc))
 
     def tournament_options(self):
         return {}

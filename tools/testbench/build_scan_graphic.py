@@ -1,4 +1,4 @@
-"""Build the integrated ScanGraphic 0.1.0 release from an explicitly supplied source tree.
+"""Build the integrated ScanGraphic 0.1.1 release from an explicitly supplied source tree.
 
 No Scan data/binaries are vendored into the Rust repository. Compile copied C++
 sources and ship their corresponding source together with the graphical build.
@@ -71,12 +71,12 @@ def main():
             archive.write(root/name, Path('frisian-draughts')/name)
         archive.writestr('BUILD-SOURCE.txt', 'Windows build: install Rust stable, MinGW g++, Python 3.12+.\ncd frisian-draughts\ncargo build --release --locked\npython -m pip install -r tools/testbench/requirements-build.txt\npython -m tools.testbench.build_scan_graphic --source ..\nThe root contains the corresponding modified Scan C++ sources and data/eval_frisian.\n')
     (destination/'README-release.txt').write_text(
-        'ScanGraphic / Frisian_Draughts 0.1.0 — Windows x64\n'
+        'ScanGraphic / Frisian_Draughts 0.1.1 — Windows x64\n'
         'Extract the entire folder and run ScanGraphic.exe. No Python installation is required.\n'
         'Analysis: original Scan board, tactics, heatmaps and evaluation graph.\n'
         'Matches: Scan Graphic and Frisian_Draughts are already configured; choose control and paired rounds.\n'
         'Start positions: Add/Edit, Paste list, Import TXT/FEN, or Load/Save JSON collection. Checked entries run in both colors.\n'
-        'Add original tool list (6) loads the original saved starts. Use as fresh setups explicitly clears extensions while retaining original FENs.\n'
+        'Add original tool list (6) loads the original saved starts. These openings work directly; original FENs and extension fields are retained in reports.\n'
         'Preview validates the selected start using the bundled Rust rules referee. Extended unsupported FEN fields are retained and reported.\n'
         'Results are written to a new folder under your user directory; it can be changed before a match.\n'
         'PDN: Import PDN or Load games.json in Matches, select a game, Open game in Analysis. Export PDN saves all loaded/matched games.\n'
@@ -90,20 +90,20 @@ def main():
             if 'licenses' in file.parts and package.locate_file(file).is_file():
                 target=destination/'THIRD_PARTY_LICENSES'/name/Path(*file.parts[file.parts.index('licenses')+1:])
                 target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(package.locate_file(file),target)
-    metadata = {'version': '0.1.0', 'rust_engine_sha256': hashlib.sha256(rust.read_bytes()).hexdigest(), 'compiler_command': command[:10] + ['src/*.cpp', '-lws2_32'],
+    metadata = {'version': '0.1.1', 'rust_engine_sha256': hashlib.sha256(rust.read_bytes()).hexdigest(), 'compiler_command': command[:10] + ['src/*.cpp', '-lws2_32'],
         'engine_sha256': hashlib.sha256((destination/'scan.exe').read_bytes()).hexdigest(),
         'source_sha256': hashlib.sha256(source_zip.read_bytes()).hexdigest(),
         'data_sha256': hashlib.sha256((destination/'data/eval_frisian').read_bytes()).hexdigest()}
-    (destination/'VERSION').write_text('0.1.0\n', encoding='utf-8')
+    (destination/'VERSION').write_text('0.1.1\n', encoding='utf-8')
     (destination/'BUILD.json').write_text(json.dumps(metadata,indent=2),encoding='utf-8')
     (destination/'SHA256SUMS.txt').write_text('\n'.join(hashlib.sha256((destination/name).read_bytes()).hexdigest()+'  '+name
         for name in ['ScanGraphic.exe','scan.exe','Frisian_Draughts.exe','ScanGraphic-source.zip','data/eval_frisian'])+'\n',encoding='utf-8')
 
 
-    archive_path = root/'dist/ScanGraphic-0.1.0-Windows-x64.zip'
+    archive_path = root/'dist/ScanGraphic-0.1.1-Windows-x64.zip'
     with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for file in destination.rglob('*'):
-            if file.is_file(): archive.write(file, Path('ScanGraphic-0.1.0')/file.relative_to(destination))
+            if file.is_file(): archive.write(file, Path('ScanGraphic-0.1.1')/file.relative_to(destination))
     print(archive_path)
 
 

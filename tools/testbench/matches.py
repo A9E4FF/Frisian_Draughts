@@ -247,7 +247,7 @@ def run_tournament(engines, referee, limits, *, rounds=1, parallel=1, master=Non
     if output is not None and Path(output).exists():
         raise ValueError('choose a new report directory')
     from . import start_positions as starts
-    selected = [starts.check(p) for p in positions if p.get('enabled')] if positions is not None else [starts.position()]
+    selected = [starts.prepare(p) for p in positions if p.get('enabled')] if positions is not None else [starts.position()]
     if not selected: raise ValueError('Enable at least one start position')
     if len({p['id'] for p in selected}) != len(selected): raise ValueError('Duplicate start position IDs')
     if positions is not None:

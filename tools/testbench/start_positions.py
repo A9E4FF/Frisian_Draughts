@@ -55,12 +55,29 @@ def load(path):
     return items
 
 
-def validate(item, referee):
+def prepare(item):
+    """Accept the old tool's zero-state, men-only opening format losslessly.
+
+    The supplied openings contain only men and H0/Fn/+0+0 suffixes. They
+    need no imported king state. Keep the complete source and each suffix
+    in the report while passing the board to the shared rules referee.
+    Other extensions still need explicit conversion or a state-aware import.
+    """
     item = check(item)
-    # Old drivers truncated fields such as :H0:F6:+0+0. Keep them in the
-    # collection, but require the user to resolve them rather than change rules.
-    if ':' in item['fen'] and len(item['fen'].split(':')) != 3:
-        raise ValueError(f"{item['name']}: unsupported extended FEN fields retained; convert explicitly before matching")
+    parts = item['fen'].split(':')
+    if len(parts) > 3:
+        known = re.fullmatch(r'H0:F[1-9][0-9]*:\+0\+0', ':'.join(parts[3:]))
+        if not known or 'K' in ':'.join(parts[1:3]).upper():
+            raise ValueError(f"{item['name']}: extended FEN contains unsupported state; original retained. Supply replay history/restrictions or use fresh setup conversion")
+        item['original_fen'] = item['fen']
+        item['legacy_fields'] = parts[3:]
+        item['fen'] = ':'.join(parts[:3])
+        item['import_note'] = 'Original tool zero-state men-only opening; complete source FEN and legacy fields retained.'
+    return item
+
+
+def validate(item, referee):
+    item = prepare(item)
     return referee.inspect(item['fen'], item['moves'], item['restrictions'])
 
 

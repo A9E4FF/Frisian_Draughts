@@ -12,6 +12,10 @@ The supplied profiles are **Frisian_Draughts** and **Scan Graphic**.
 2. Under Start positions, use **Add**, **Paste list**, or **Import TXT / FEN**.
    Text files use one FEN per line; blank lines and `#`/`;` comments are allowed.
    The legacy `FEN:` prefix and `start` keyword are accepted.
+   **Add original tool list (6)** brings in the six saved positions from the old
+   tool's `positions/positions.txt`. These contain extended fields: use **Use as
+   fresh setups** explicitly to play their boards with cleared history. The full
+   original FEN and conversion note remain in the collection and match reports.
 3. Name, edit, reorder and check the entries to run. **Preview** validates the
    selected entry and displays it on the board. **Save collection** writes JSON;
    **Load collection** restores names, IDs, order, check states and history.
@@ -63,7 +67,7 @@ Run the packaged regression smoke with a new output directory:
 ScanGraphic.exe --smoke-test --smoke-output C:\temp\scan-smoke
 ```
 
-It checks original Scan search, evaluation and patterns; four real Scan/Rust games
-across white/black starts; PDN reimport; and original game analysis/navigation.
+It checks original Scan search, evaluation and patterns; sixteen real Scan/Rust games
+across white/black starts and all six original saved positions; PDN reimport; and original game analysis/navigation.
 The manual GitHub workflow accepts an accessible source-archive URL and SHA-256
 to reproduce the package without committing Scan's evaluation data to Git.

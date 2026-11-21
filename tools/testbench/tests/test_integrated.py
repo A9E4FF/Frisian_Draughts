@@ -14,6 +14,11 @@ from tools.testbench.session import EngineProfile
 
 @unittest.skipUnless(os.environ.get('FRISIAN_TEST_ENGINE'), 'real referee required')
 class PositionScheduleTests(unittest.TestCase):
+    def test_original_saved_boards_validate_after_explicit_conversion(self):
+        referee = Referee(os.environ['FRISIAN_TEST_ENGINE'])
+        for item in starts.fresh_setups(starts.original_tool_positions()):
+            self.assertEqual(starts.validate(item, referee)['outcome'], 'ongoing')
+
     def test_each_start_both_colors_and_history_reports(self):
         engine = os.environ['FRISIAN_TEST_ENGINE']; referee = Referee(engine)
         entrants = [Entrant(name, EngineProfile(engine), {}) for name in ['A', 'B']]

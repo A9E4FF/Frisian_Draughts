@@ -29,7 +29,17 @@ class StartPositions(QWidget):
             ('Load collection', self.load), ('Save collection', self.save)]:
             self.button(row, text, callback)
             if text == 'Paste list': row = QHBoxLayout(); layout.addLayout(row)
+        row = QHBoxLayout(); layout.addLayout(row)
+        self.button(row, 'Add original tool list (6)', self.original_tool)
+        self.button(row, 'Use as fresh setups', self.fresh_setups)
+        note = QLabel('Fresh setups clear extended history fields; original FENs are retained.'); note.setWordWrap(True); layout.addWidget(note)
         self.refresh()
+
+    def original_tool(self):
+        self.positions.extend(model.original_tool_positions()); self.refresh(len(self.positions)-6)
+
+    def fresh_setups(self):
+        self.positions = model.fresh_setups(self.positions); self.refresh()
 
     @staticmethod
     def button(layout, text, callback):

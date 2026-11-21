@@ -46,6 +46,8 @@ def main():
         panel = window.matches
         panel.depth.setValue(1); panel.ply_cap.setValue(4)
         panel.starts.import_text('B:W31-50:B1-20')
+        from tools.testbench import start_positions
+        panel.starts.positions.extend(start_positions.fresh_setups(start_positions.original_tool_positions())); panel.starts.refresh()
         panel.output.setText(str(args.smoke_output/'matches'))
         phase = ['analysis']
         def finish(error=None):
@@ -61,14 +63,14 @@ def main():
                     window.tabs.setCurrentIndex(1); panel.run_matches(); phase[0] = 'matches'
                 elif phase[0] == 'matches' and panel.worker is None:
                     if panel.last_error: raise ValueError(panel.last_error)
-                    if len(panel.games) != 4 or any(g['termination'] != 'adjudication-ply-limit' for g in panel.games): raise ValueError('Paired Scan/Rust multi-FEN match failed')
+                    if len(panel.games) != 16 or any(g['termination'] != 'adjudication-ply-limit' for g in panel.games): raise ValueError('Paired Scan/Rust multi-FEN match failed')
                     from tools.testbench import pdn
                     from tools.testbench.referee import Referee
                     documents = pdn.loads((args.smoke_output/'matches/games.pdn').read_text(encoding='utf-8'))
                     for document in documents:
                         pdn.validate(document, Referee(str(rust)))
                         if document.errors: raise ValueError('; '.join(document.errors))
-                    window.open_match(panel.games[0]); phase[0] = 'replay'
+                    window.open_match(panel.games[4]); phase[0] = 'replay'
                 elif phase[0] == 'replay' and replay_done[0]:
                     window._goto_ply(2)
                     if window._current_ply != 2: raise ValueError('Original game navigation failed')

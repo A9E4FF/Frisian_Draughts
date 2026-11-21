@@ -62,3 +62,20 @@ def validate(item, referee):
     if ':' in item['fen'] and len(item['fen'].split(':')) != 3:
         raise ValueError(f"{item['name']}: unsupported extended FEN fields retained; convert explicitly before matching")
     return referee.inspect(item['fen'], item['moves'], item['restrictions'])
+
+
+def original_tool_positions():
+    from .legacy_starts import LEGACY_FENS
+    return [position(f'Original tool {i:02}', fen, source='Original Engine Match tool: positions/positions.txt') for i, fen in enumerate(LEGACY_FENS, 1)]
+
+
+def fresh_setups(positions):
+    """Explicit user conversion: keep the full original FEN and clear history."""
+    result = copy.deepcopy(positions)
+    for item in result:
+        if ':' in item['fen'] and len(item['fen'].split(':')) > 3:
+            item.setdefault('original_fen', item['fen'])
+            item['fen'] = ':'.join(item['fen'].split(':')[:3])
+            item['moves'] = []; item['restrictions'] = {}
+            item['conversion_note'] = 'Explicit fresh setup: extended fields and previous history are not applied; original FEN retained.'
+    return result

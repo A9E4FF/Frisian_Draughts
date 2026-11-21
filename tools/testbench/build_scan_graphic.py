@@ -53,6 +53,11 @@ def main():
     for name in ['scan.exe', 'scan.ini', 'license.txt', 'readme.txt', 'protocol.txt']:
         shutil.copy2(stage/name, destination/name)
     shutil.copytree(stage/'data', destination/'data', dirs_exist_ok=True)
+    from tools.testbench import start_positions
+    originals = start_positions.original_tool_positions()
+    (destination/'examples').mkdir(exist_ok=True)
+    (destination/'examples/original-tool-positions.fen').write_text('\n'.join(p['fen'] for p in originals)+'\n', encoding='utf-8')
+    start_positions.save(destination/'examples/original-tool-fresh-setups.json', start_positions.fresh_setups(originals))
     source_zip = destination/'ScanGraphic-source.zip'
     with zipfile.ZipFile(source_zip, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for file in stage.rglob('*'):
@@ -71,6 +76,7 @@ def main():
         'Analysis: original Scan board, tactics, heatmaps and evaluation graph.\n'
         'Matches: Scan Graphic and Frisian_Draughts are already configured; choose control and paired rounds.\n'
         'Start positions: Add/Edit, Paste list, Import TXT/FEN, or Load/Save JSON collection. Checked entries run in both colors.\n'
+        'Add original tool list (6) loads the original saved starts. Use as fresh setups explicitly clears extensions while retaining original FENs.\n'
         'Preview validates the selected start using the bundled Rust rules referee. Extended unsupported FEN fields are retained and reported.\n'
         'Results are written to a new folder under your user directory; it can be changed before a match.\n'
         'PDN: Import PDN or Load games.json in Matches, select a game, Open game in Analysis. Export PDN saves all loaded/matched games.\n'

@@ -54,6 +54,8 @@ class MatchesPanel(QWidget):
         from .start_positions import StartPositions
         self.starts = StartPositions(); self.extra_settings.addWidget(self.starts)
         self.starts.error.connect(self.error); self.starts.preview.connect(self.preview_start)
+        self.total = QLabel(); self.extra_settings.addWidget(self.total)
+        self.starts.changed.connect(self.update_total); self.rounds.valueChanged.connect(self.update_total); self.update_total()
         self.run_button = QPushButton('Run paired matches'); self.run_button.clicked.connect(self.run_matches); form.addRow(self.run_button)
         view = QVBoxLayout(); root.addLayout(view, 2)
         self.board = BoardWidget(); self.board.setEnabled(False); view.addWidget(self.board, 2)
@@ -104,12 +106,17 @@ class MatchesPanel(QWidget):
         try:
             from tools.testbench.start_positions import validate
             state = validate(item, Referee(self.referee.text()))
-            self.board.set_position({int(k): v for k, v in state['pieces'].items()}, 'W' if state['turn'] == 'white' else 'B')
+            self.board.set_position({p['square']: ('W' if p['side'] == 'white' else 'B') if p['piece'] == 'king' else ('w' if p['side'] == 'white' else 'b') for p in state['pieces']}, 'W' if state['turn'] == 'white' else 'B')
             self.status.setText(f"{item['name']}: {state['outcome']}, {len(state['legal_moves'])} legal moves")
         except Exception as exc: self.error(str(exc))
 
+    def update_total(self):
+        count = sum(p['enabled'] for p in self.starts.positions)
+        self.total.setText(f'{count} enabled starts × {self.rounds.value()} rounds × 2 colors = {count * self.rounds.value() * 2} games')
+
     def tournament_options(self):
-        return {}
+        import copy
+        return {'positions': copy.deepcopy(self.starts.positions)}
 
     def run_matches(self):
         if self.worker is not None: return
@@ -139,7 +146,7 @@ class MatchesPanel(QWidget):
     def on_event(self, event):
         kind = event['type']; prefix = f"Game {event.get('game', '?')}/{event.get('total', '?')}"
         if kind == 'position':
-            state = event['state']; pieces = {int(k): v for k, v in state['pieces'].items()}
+            state = event['state']; pieces = {p['square']: ('W' if p['side'] == 'white' else 'B') if p['piece'] == 'king' else ('w' if p['side'] == 'white' else 'b') for p in state['pieces']}
             self.board.set_position(pieces, 'W' if state['turn'] == 'white' else 'B')
         elif kind == 'game-started': self.status.setText(f"{prefix}: {event['white']} – {event['black']}")
         elif kind == 'thinking': self.status.setText(f"{prefix}: {event['engine']}, ply {event['ply'] + 1}")
@@ -149,9 +156,10 @@ class MatchesPanel(QWidget):
     @Slot(object)
     def completed(self, games):
         self.games = games; self.results.clear()
-        for game in games: self.results.addItem(f"{game['white']} – {game['black']}: {game['result']} ({game['termination']})")
+        for game in games: self.results.addItem(f"{game.get('position_name', 'Start')}: {game['white']} – {game['black']}: {game['result']} ({game['termination']})")
         if games: self.results.setCurrentRow(0)
-        self.status.setText(f'{len(games)} games saved to {self.output.text()}')
+        failures = [g for g in games if g.get('error')]
+        self.status.setText(f'{len(games)} games saved to {self.output.text()}' + (f"; {failures[0]['error']}" if failures else ''))
 
     @Slot()
     def finished(self):

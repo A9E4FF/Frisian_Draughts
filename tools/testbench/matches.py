@@ -262,7 +262,7 @@ def run_tournament(engines, referee, limits, *, rounds=1, parallel=1, master=Non
             on_event({**event, 'game': number, 'total': len(pairs), 'position_id': position['id'], 'position_name': position['name']})
         progress({'type': 'game-started', 'white': engines[a].name, 'black': engines[b].name})
         game = play_game(engines[a], engines[b], referee, limits, fen=position['fen'], initial_moves=position['moves'], restrictions=position['restrictions'], cancel=cancel, on_event=progress)
-        game.update(position_id=position['id'], position_name=position['name'])
+        game.update(position_id=position['id'], position_name=position['name'], start_position=position)
         progress({'type': 'game-finished', 'record': game})
         return game
     with ThreadPoolExecutor(max_workers=parallel) as pool:

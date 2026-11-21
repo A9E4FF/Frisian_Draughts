@@ -17,15 +17,29 @@ class StartPositions(QWidget):
         super().__init__(parent)
         self.positions = [model.position()]
         layout = QVBoxLayout(self); layout.addWidget(QLabel('Start positions — checked entries run in list order'))
-        self.list = QListWidget(); self.list.setMaximumHeight(130); layout.addWidget(self.list)
+        self.list = QListWidget(); self.list.setMinimumHeight(130); layout.addWidget(self.list)
         self.list.itemChanged.connect(self.checked)
         row = QHBoxLayout(); layout.addLayout(row)
         for text, callback in [('Add', self.add), ('Edit', self.edit), ('Delete', self.delete),
-            ('↑', lambda: self.move(-1)), ('↓', lambda: self.move(1)), ('Preview', self.show_preview)]: self.button(row, text, callback)
+            ('↑', lambda: self.move(-1)), ('↓', lambda: self.move(1)), ('Preview', self.show_preview)]:
+            self.button(row, text, callback)
+            if text == 'Delete': row = QHBoxLayout(); layout.addLayout(row)
         row = QHBoxLayout(); layout.addLayout(row)
         for text, callback in [('Import TXT / FEN', self.import_file), ('Paste list', self.paste),
-            ('Load collection', self.load), ('Save collection', self.save)]: self.button(row, text, callback)
+            ('Load collection', self.load), ('Save collection', self.save)]:
+            self.button(row, text, callback)
+            if text == 'Paste list': row = QHBoxLayout(); layout.addLayout(row)
+        row = QHBoxLayout(); layout.addLayout(row)
+        self.button(row, 'Add original tool list (6)', self.original_tool)
+        self.button(row, 'Use as fresh setups', self.fresh_setups)
+        note = QLabel('Fresh setups clear extended history fields; original FENs are retained.'); note.setWordWrap(True); layout.addWidget(note)
         self.refresh()
+
+    def original_tool(self):
+        self.positions.extend(model.original_tool_positions()); self.refresh(len(self.positions)-6)
+
+    def fresh_setups(self):
+        self.positions = model.fresh_setups(self.positions); self.refresh()
 
     @staticmethod
     def button(layout, text, callback):

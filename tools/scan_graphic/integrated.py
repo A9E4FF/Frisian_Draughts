@@ -1,6 +1,7 @@
 """The original ScanGraphic analysis window with the shared Matches tab."""
 from pathlib import Path
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QTabWidget, QToolBar, QDockWidget, QPushButton
 from tools.testbench.gui.matches_panel import MatchesPanel
 from tools.testbench.matches import Entrant
@@ -13,6 +14,7 @@ class IntegratedWindow(MainWindow):
     def __init__(self, scan, work_dir, rust):
         super().__init__(str(scan), str(work_dir))
         self.setWindowTitle('ScanGraphic — Frisian Draughts 0.1.0')
+        self.resize(1400, 900)
         self._close_pending = False
         self._analysis_visibility = {}
         analysis = self.takeCentralWidget()
@@ -25,15 +27,27 @@ class IntegratedWindow(MainWindow):
         self.tabs.currentChanged.connect(self.tab_changed)
         self.matches.open_game.connect(self.open_match)
         self.matches.idle.connect(self.matches_idle)
+        self._export_action = QAction('Export PDN', self)
+        self._export_action.triggered.connect(self.matches.export_pdn)
+        self.findChildren(QToolBar)[0].addAction(self._export_action)
 
     def tab_changed(self, index):
         widgets = self.findChildren(QDockWidget) + self.findChildren(QToolBar)
         if index:
-            if self._analyzing: self._engine.stop_analysis(); self._analyzing = False
+            if self._analyzing: self._engine.stop_analysis(); self._analyzing = False; self._btn_analyze.setText('▶ Analyze')
             self._analysis_visibility = {w: not w.isHidden() for w in widgets}
             for widget in widgets: widget.hide()
         else:
             for widget, visible in self._analysis_visibility.items(): widget.setVisible(visible)
+
+    def _on_game_analysis(self, data):
+        super()._on_game_analysis(data)
+        if hasattr(self, 'tabs') and self.tabs.currentIndex():
+            self._analysis_visibility[self._game_dock] = True; self._game_dock.hide()
+
+    def _import_pdn(self):
+        self.tabs.setCurrentIndex(1)
+        self.matches.import_pdn()
 
     def open_match(self, record):
         try:
@@ -51,6 +65,7 @@ class IntegratedWindow(MainWindow):
             # Replaying from the root preserves repetitions and Frisian king history.
             self._engine.send_command('new-game')
             self._engine.set_position(fen=getattr(self, '_game_fen', None), moves=' '.join(self._game_moves[:self._current_ply]))
+            self._engine.request_analysis_data()
 
     def matches_idle(self):
         if self._close_pending: QTimer.singleShot(0, self.close)

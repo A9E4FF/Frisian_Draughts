@@ -5,6 +5,19 @@ from tools.testbench import start_positions as starts
 
 
 class StartPositionTests(unittest.TestCase):
+    def test_original_saved_list_explicit_conversion_retains_full_fen(self):
+        original = starts.original_tool_positions()
+        self.assertEqual(len(original), 6)
+        converted = starts.fresh_setups(original)
+        self.assertEqual([p['id'] for p in original], [p['id'] for p in converted])
+        self.assertTrue(all(len(p['fen'].split(':')) > 3 for p in original))
+        for before, after in zip(original, converted):
+            self.assertEqual(after['original_fen'], before['fen'])
+            self.assertEqual(after['fen'], ':'.join(before['fen'].split(':')[:3]))
+            self.assertEqual(after['moves'], [])
+            self.assertEqual(after['restrictions'], {})
+            self.assertIn('Explicit fresh setup', after['conversion_note'])
+
     def test_legacy_text_and_metadata_preserved(self):
         items = starts.parse_text('# comment\nFEN: W:W31-50:B1-20\n; another\nB:WK28:B1:H0:F6:+0+0\nstart')
         self.assertEqual(len(items), 3)

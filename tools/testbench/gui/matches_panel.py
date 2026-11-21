@@ -6,7 +6,7 @@ import threading
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton, QLabel,
-    QListWidget, QPlainTextEdit, QFileDialog, QMessageBox)
+    QListWidget, QPlainTextEdit, QFileDialog, QMessageBox, QScrollArea, QTabWidget)
 
 from tools.testbench.matches import MatchLimits, run_tournament, load_config
 from tools.testbench.profiles import preflight, save_profiles
@@ -29,12 +29,17 @@ class MatchesPanel(QWidget):
         self.cancel_event = threading.Event()
         self.last_error = None
         root = QHBoxLayout(self)
-        self.settings = QWidget(); form = QFormLayout(self.settings); root.addWidget(self.settings, 1)
+        self.settings = QWidget(); settings_layout = QVBoxLayout(self.settings); root.addWidget(self.settings, 1)
+        self.settings_tabs = QTabWidget(); settings_layout.addWidget(self.settings_tabs)
+        controls = QWidget(); form = QFormLayout(controls)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(controls); scroll.setMinimumWidth(460)
+        self.settings_tabs.addTab(scroll, 'Match settings')
         self.a = QComboBox(); self.b = QComboBox()
         self.profile_row = QHBoxLayout(); form.addRow(self.profile_row)
         for text, callback in [('Add engine', self.add_engine), ('Edit engine', self.edit_engine),
                                ('Load profiles', self.load_profiles), ('Save profiles', self.save_profiles)]:
             self.button(self.profile_row, text, callback)
+            if text == 'Edit engine': self.profile_row = QHBoxLayout(); form.addRow(self.profile_row)
         self.referee = QLineEdit(str(referee))
         self.control = QComboBox(); self.control.addItems(['Depth', 'Move time', 'Fischer clock'])
         self.depth = QSpinBox(); self.depth.setRange(1, 64); self.depth.setValue(12)
@@ -50,20 +55,22 @@ class MatchesPanel(QWidget):
             ('Seconds / initial clock', self.budget), ('Increment', self.increment), ('Paired rounds', self.rounds),
             ('Simultaneous games', self.parallel), ('Maximum plies', self.ply_cap),
             ('Response watchdog (seconds)', self.watchdog), ('New report directory', self.output)]: form.addRow(name, field)
-        self.extra_settings = QVBoxLayout(); form.addRow(self.extra_settings)
+        self.extra_settings = QVBoxLayout()
         from .start_positions import StartPositions
-        self.starts = StartPositions(); self.extra_settings.addWidget(self.starts)
+        self.starts = StartPositions(); self.settings_tabs.addTab(self.starts, 'Start positions')
         self.starts.error.connect(self.error); self.starts.preview.connect(self.preview_start)
-        self.total = QLabel(); self.extra_settings.addWidget(self.total)
+        self.total = QLabel(); self.total.setWordWrap(True); settings_layout.addWidget(self.total)
         self.starts.changed.connect(self.update_total); self.rounds.valueChanged.connect(self.update_total); self.update_total()
-        self.run_button = QPushButton('Run paired matches'); self.run_button.clicked.connect(self.run_matches); form.addRow(self.run_button)
+        self.run_button = QPushButton('Run paired matches'); self.run_button.clicked.connect(self.run_matches); settings_layout.addWidget(self.run_button)
         view = QVBoxLayout(); root.addLayout(view, 2)
-        self.board = BoardWidget(); self.board.setEnabled(False); view.addWidget(self.board, 2)
+        self.board = BoardWidget(); self.board.setEnabled(False); self.board.set_position({**{i: 'b' for i in range(1, 21)}, **{i: 'w' for i in range(31, 51)}}, 'W'); view.addWidget(self.board, 2)
         self.status = QLabel('Ready'); self.status.setWordWrap(True); view.addWidget(self.status)
         self.results = QListWidget(); view.addWidget(self.results)
         row = QHBoxLayout(); view.addLayout(row)
         self.cancel_button = self.button(row, 'Stop matches', self.cancel); self.cancel_button.setEnabled(False)
         self.button(row, 'Open game in Analysis', self.analyze_selected)
+        self.button(row, 'Import PDN', self.import_pdn)
+        self.button(row, 'Load games.json', self.import_report)
         self.button(row, 'Export PDN', self.export_pdn)
         self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(110); view.addWidget(self.log)
         self.refresh_profiles()
@@ -178,9 +185,53 @@ class MatchesPanel(QWidget):
         index = self.results.currentRow()
         if 0 <= index < len(self.games): self.open_game.emit(self.games[index])
 
+    def import_pdn(self):
+        if self.worker is not None: return
+        path, _ = QFileDialog.getOpenFileName(self, 'Import match games', '', 'PDN (*.pdn *.PDN)')
+        if path: self.load_pdn(path)
+
+    def load_pdn(self, path):
+        if self.worker is not None: return
+        referee = Referee(self.referee.text()); self.cancel_event = threading.Event()
+        def work(emit):
+            documents = pdn.loads(Path(path).read_text(encoding='utf-8-sig'))
+            if not documents: raise ValueError('No PDN games found')
+            games = []
+            for document in documents:
+                if self.cancel_event.is_set(): raise ValueError('PDN import cancelled')
+                pdn.validate(document, referee)
+                if document.errors: raise ValueError('; '.join(document.errors))
+                games.append({'fen': document.fen, 'moves': list(document.moves),
+                    'white': document.tag('White', '?'), 'black': document.tag('Black', '?'),
+                    'result': document.result, 'termination': 'PDN import', '_document': document})
+            return games
+        self.start_import(work)
+
+    def import_report(self):
+        if self.worker is not None: return
+        path, _ = QFileDialog.getOpenFileName(self, 'Canonical match report', '', 'JSON (*.json)')
+        if not path: return
+        from .models import load_replay
+        referee = Referee(self.referee.text())
+        def work(emit):
+            games = load_replay(path)
+            for game in games: referee.inspect(game['fen'], game['moves'], game.get('restrictions'))
+            return games
+        self.start_import(work)
+
+    def start_import(self, work):
+        self.worker = Task(work, self); self.worker.failed.connect(self.error)
+        self.worker.result.connect(self.imported); self.worker.finished.connect(self.finished)
+        self.settings.setEnabled(False); self.cancel_button.setEnabled(True); self.last_error = None
+        self.status.setText('Validating imported games…'); self.worker.start()
+
+    @Slot(object)
+    def imported(self, games):
+        self.completed(games); self.status.setText(f'{len(games)} games imported')
+
     def export_pdn(self):
         if not self.games: return
         path, _ = QFileDialog.getSaveFileName(self, 'Export match games', '', 'PDN (*.pdn)')
         if path:
-            try: Path(path).write_text(pdn.dumps([pdn.from_record(g, dialect='scan') for g in self.games]), encoding='utf-8')
+            try: Path(path).write_text(pdn.dumps([g.get('_document') or pdn.from_record(g, dialect='scan') for g in self.games]), encoding='utf-8')
             except Exception as exc: self.error(str(exc))

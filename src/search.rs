@@ -58,9 +58,7 @@ impl SearchLimits {
                 ..Self::default()
             })
         } else {
-            Err(Error(
-                "depth must be 1–64".into(),
-            ))
+            Err(Error("depth must be 1–64".into()))
         }
     }
     pub fn max_depth(self) -> u8 {
@@ -91,9 +89,7 @@ impl SearchLimits {
     }
     pub fn with_tt_megabytes(mut self, megabytes: usize) -> Result<Self, Error> {
         if !(1..=256).contains(&megabytes) {
-            return Err(Error(
-                "TT memory must be 1–256 MiB".into(),
-            ));
+            return Err(Error("TT memory must be 1–256 MiB".into()));
         }
         self.tt_megabytes = megabytes;
         Ok(self)

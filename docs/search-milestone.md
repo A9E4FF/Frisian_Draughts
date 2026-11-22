@@ -51,3 +51,52 @@ The fixed TT settings are 16 MiB for Rust and exponent 20 for Scan
 disables books and bitbases, gives 50 ms Hub response margin, and
 adjudicates at 200 plies. Results include W/D/L and a separate termination
 tally. Each completed game is checkpointed before aggregate reporting.
+
+## Recorded Windows validation
+
+Three serial repeats per build, capped at 4 seconds per position and repeat.
+Entries give the median cumulative milliseconds and nodes from the completed
+iteration. The JSONL and summary files preserve min/max and iteration counters.
+
+| Position and depth | Corpus build | Compact TT | Move ordering | PVS |
+| --- | ---: | ---: | ---: | ---: |
+| Opening D12 | 1705.1 / 5,650,098 | 641.3 / 2,252,232 | 256.3 / 1,081,241 | 240.4 / 1,017,918 |
+| Tactical D12 | 2568.9 / 7,641,997 | 1440.7 / 4,469,471 | 919.9 / 3,381,834 | 622.7 / 2,357,205 |
+| Closed D10 | 362.3 / 1,186,419 | 98.3 / 319,336 | 37.2 / 136,459 | 36.2 / 132,976 |
+| Kings D12 | 182.4 / 756,010 | 58.7 / 286,645 | 69.5 / 394,080 | 35.2 / 170,978 |
+| Opening D15 | capped | capped | 3000.9 / 12,395,192 | 2248.5 / 9,492,901 |
+| Closed D15 | capped | capped | 2722.0 / 9,730,713 | 2486.7 / 9,526,809 |
+| Kings D15 | capped | 738.9 / 3,388,452 | 360.9 / 1,888,507 | 268.7 / 1,284,224 |
+
+The tactical fixture reached D14 with PVS and capped before D15 in all
+builds. PVS increased closed-position D12 work from 636,137 to 705,737
+nodes and the median from 171.8 to 186.7 ms, then lowered both at D15.
+At opening D12 cost per million nodes was about 302, 285, 237 and 236 ms
+across the four builds. Most of the measured gain came from fewer nodes.
+
+| Build | Source commit or PR | Executable SHA-256 |
+| --- | --- | --- |
+| Corpus | b5190adb941fc8c687d0d9cc536667eda146a6b0 | 52805eff1b35a998c4b3cb48bd2e4cc7fa543bfce2770707cbc470d04d052a06 |
+| Compact TT | 66e22c474a956b741c3452b54efe311a38f7b34b | 18360d88bf0a2f50c4184d1764d4f02d55ca34e11c8755ffd68b6352a5381b52 |
+| Move ordering | 6940a74a69c468596b24eb42736cab6eea4508a4 | 827e875e0481ad1f4ad2dd6a9f10887585e55d4f84d113a2e65af52c368703a4 |
+| PVS | Final milestone PR | 10805a88536d4a90c13955af624fa3015ee4ad52fc4e7b3372557dafb35fb671 |
+
+The four builds agreed with their preceding baseline on shallow scores across
+40 fixtures and their PVs replayed with root history. The instrumentation
+build also matched frozen R0 move, PV, and counters there. Each build passed
+the Rust suite, the two Python/Qt suites (three optional skips combined), and
+the retained ScanGraphic GUI's 16-game smoke with PDN replay. The separate
+pinned C++ differential job runs in GitHub CI.
+
+Historical Scan matches with frozen R0 yielded 3/3/42 W/D/L at fixed
+depth 10 and 0/0/48 at 100 ms. Those are baseline investigations. The
+new serial match matrix is recorded independently with its own manifests
+and game checkpoints. Keep timed match strength conclusions provisional.
+
+## Milestone 2
+
+Retain this corpus and the four binaries. Use the three tactical audits and
+six endgame candidates to validate bounded quiet-threat or sacrifice
+extensions and phase-aware positional/endgame evaluation. Keep extensions
+and evaluation separate, and treat the correlated endgames accordingly.
+Run late-move reductions as a later isolated experiment.

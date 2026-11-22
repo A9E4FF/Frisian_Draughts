@@ -37,6 +37,7 @@ pub struct SearchLimits {
     max_nodes: Option<u64>,
     max_time: Option<Duration>,
     search_forced_root: bool,
+    pvs_enabled: bool,
 }
 impl Default for SearchLimits {
     fn default() -> Self {
@@ -47,6 +48,7 @@ impl Default for SearchLimits {
             max_nodes: None,
             max_time: None,
             search_forced_root: false,
+            pvs_enabled: true,
         }
     }
 }
@@ -78,6 +80,11 @@ impl SearchLimits {
     /// Search a sole legal move to obtain a completed analysis score.
     pub fn with_forced_root_search(mut self, enabled: bool) -> Self {
         self.search_forced_root = enabled;
+        self
+    }
+    /// Use ordinary alpha-beta for reference comparisons.
+    pub fn with_pvs_enabled(mut self, enabled: bool) -> Self {
+        self.pvs_enabled = enabled;
         self
     }
     pub fn with_tt_enabled(mut self, enabled: bool) -> Self {
@@ -484,7 +491,24 @@ impl Context {
                 &[]
             };
             let (score, continuation) =
-                self.negamax(child, depth - 1, ply + 1, -beta, -alpha, next_preferred);
+                if self.limits.pvs_enabled && !pv.is_empty() && alpha + 1 < beta {
+                    let probe = self.negamax(
+                        child,
+                        depth - 1,
+                        ply + 1,
+                        -alpha - 1,
+                        -alpha,
+                        next_preferred,
+                    );
+                    let score = -probe.0;
+                    if !self.aborted && alpha < score && score < beta {
+                        self.negamax(child, depth - 1, ply + 1, -beta, -alpha, next_preferred)
+                    } else {
+                        probe
+                    }
+                } else {
+                    self.negamax(child, depth - 1, ply + 1, -beta, -alpha, next_preferred)
+                };
             let score = -score;
             self.history.pop();
             if self.aborted {
@@ -699,6 +723,44 @@ mod tests {
             copy.play(mv).unwrap();
         }
     }
+    #[test]
+    fn pvs_matches_wide_search_with_and_without_cache() {
+        let mut history = Game::new(Position::from_fen("W:WK1:BK5").unwrap());
+        for notation in ["1-12", "5-10", "12-1", "10-5", "1-12", "5-10"] {
+            let mv = history.position().parse_move(notation).unwrap();
+            history.play(&mv).unwrap();
+        }
+        let restricted = Position::new(
+            White,
+            &[
+                (sq(28), White, King),
+                (sq(46), White, Man),
+                (sq(1), Black, Man),
+            ],
+            [Some(KingRestriction::new(sq(28), 3).unwrap()), None],
+        )
+        .unwrap();
+        for game in [
+            Game::default(),
+            history,
+            Game::new(restricted),
+            Game::new(Position::from_fen("W:W28:B23").unwrap()),
+            Game::new(Position::from_fen("W:W:B23").unwrap()),
+        ] {
+            for cache in [false, true] {
+                let limits = SearchLimits::new(5)
+                    .unwrap()
+                    .with_tt_enabled(cache)
+                    .with_forced_root_search(true);
+                let pvs = search(&game, limits);
+                let wide = search(&game, limits.with_pvs_enabled(false));
+                assert_eq!(pvs.score, wide.score);
+                assert_eq!(pvs.completed_depth, wide.completed_depth);
+                replay(&game, &pvs.principal_variation);
+            }
+        }
+    }
+
     #[test]
     fn limits_and_fast_paths() {
         assert_eq!(SearchLimits::default().max_depth(), 10);

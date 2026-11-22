@@ -17,6 +17,7 @@ DEFAULT_CASES = (
     "benchmark-kings",
 )
 COUNTERS = ("nodes", "quiescence_nodes", "elapsed_ms", "tt_probes", "tt_hits", "tt_cutoffs")
+METRICS = (*COUNTERS, "nps", "quiescence_share")
 
 
 def corpus():
@@ -100,8 +101,8 @@ def main(argv=None):
             entry = dict(case=case, depth=depth, completed=len(rows), requested=args.repeats)
             if rows:
                 entry.update(
-                    cumulative={key: spread([row[key] for row in rows]) for key in COUNTERS},
-                    iteration={key: spread([row["iteration"][key] for row in rows]) for key in COUNTERS},
+                    cumulative={key: spread([row[key] for row in rows]) for key in METRICS},
+                    iteration={key: spread([row["iteration"][key] for row in rows]) for key in METRICS},
                     tt_capacity=rows[0]["tt_capacity"],
                     tt_storage_budget_bytes=rows[0]["tt_storage_budget_bytes"],
                 )

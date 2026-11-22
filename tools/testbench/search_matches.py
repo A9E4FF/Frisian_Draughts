@@ -66,7 +66,7 @@ def main(argv=None):
                     else:
                         tally["draw" if result == "1/2-1/2" else "unfinished"] += 1
                     print(name, ms, event["game"], event["total"], result, game["termination"], flush=True)
-                run_tournament([candidate, opponent], referee, MatchLimits(move_time=ms / 1000),
+                run_tournament([candidate, opponent], referee, MatchLimits(depth=None, move_time=ms / 1000),
                                positions=starts, parallel=1, output=run / "reports", on_event=progress)
             summary = dict(results=tally, terminations=causes)
             (run / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

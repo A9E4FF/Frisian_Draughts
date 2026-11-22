@@ -8,15 +8,14 @@ or independently loaded FEN positions. The evaluator and legal rules are unchang
 
 Each entry stores a deterministic Zobrist key, a full `Position` for collision
 verification, remaining depth, normalized score, exact/lower/upper bound, generation,
-and a complete move line including captured sets. Four-entry clusters replace
+and one complete move identity including its captured set. Four-entry clusters replace
 older entries first and prefer shallow entries within the same generation.
 
 The default budget is **16 MiB**. `SearchLimits::with_tt_enabled(false)` preserves
-the uncached search baseline; `with_tt_megabytes(n)` accepts **1–256 MiB**.
-The budget includes worst-case payload reservation for every slot: boxed lines
-are capped at 128 moves and slot count is rounded down. Actual allocation is
-usually smaller; allocator overhead is outside the nominal payload budget.
-Longer lines are not cached. No unsafe code or shared-table threading is involved.
+the uncached search baseline; `with_tt_megabytes(n)` accepts **1â€“256 MiB**.
+All slots are fixed-size and the cluster count rounds down to a power of two.
+The default holds 131,072 entries in 9 MiB on Windows x64. Allocator overhead
+is outside the slot payload budget. The search reports slot count and bytes.
 
 Zobrist keys include every piece, the side to move, and both active king restrictions
 (square and count). A hash hit alone never authorizes reuse: full position equality
@@ -47,9 +46,12 @@ that a result calculated with different repetition counts is universally exact.
 A later implementation could verify and cache complete repetition contexts.
 
 The previous iteration's PV remains first in move ordering; the table move is
-next when different. Bound cutoffs return the cached legal line, so reported
-principal variations remain replayable. Equal-valued best moves can change when
-ordering changes; score equivalence is the correctness target.
+next when different. A cached cutoff can supply a legal PV prefix. Exact
+continuations are verified at matching depth and score with full board equality.
+Reconstruction stops at missing, inexact, illegal, or history-dependent links,
+and at the quiescence horizon. A short PV can therefore accompany a fully
+completed search. Equal-valued best moves may change when ordering changes.
+
 
 ## Search reports
 
@@ -72,7 +74,7 @@ reported PV. Tests additionally cover forced hash collisions, bound conditions,
 terminal-distance normalization, memory controls, replacement, same-board/different
 histories, callback events, and seeded uncached-score comparisons.
 
-Single-run release observations on the shared Linux x86_64 AMD EPYC 9V74 host,
+Historical single-run release observations before compaction on the shared Linux x86_64 AMD EPYC 9V74 host,
 Rust 1.100.0, default 16 MiB budget:
 
 | Position, depth 10 | Nodes without TT | Nodes with TT | Seconds without | Seconds with | Hits / cutoffs |
@@ -82,7 +84,7 @@ Rust 1.100.0, default 16 MiB budget:
 | Kings | 540,357 | 115,778 | 0.108743 | 0.026147 | 27,648 / 3,741 |
 
 All paired scores matched. These fixtures show reduced work, not a universal
-speedup guarantee. Zobrist recomputation, full-position checks, PV storage, and
+speedup guarantee. Zobrist recomputation, full-position checks, PV reconstruction, and
 conservative history/depth restrictions add overhead. Performance depends on
 position, table budget, machine load, and compiler settings. The historical
 bitboard comparison must run with TT disabled when checking unchanged node counts.

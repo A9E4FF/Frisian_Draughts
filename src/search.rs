@@ -58,7 +58,7 @@ impl SearchLimits {
                 ..Self::default()
             })
         } else {
-            Err(Error("depth must be 1–64".into()))
+            Err(Error("depth must be 1Ã¢â‚¬â€œ64".into()))
         }
     }
     pub fn max_depth(self) -> u8 {
@@ -89,7 +89,7 @@ impl SearchLimits {
     }
     pub fn with_tt_megabytes(mut self, megabytes: usize) -> Result<Self, Error> {
         if !(1..=256).contains(&megabytes) {
-            return Err(Error("TT memory must be 1–256 MiB".into()));
+            return Err(Error("TT memory must be 1Ã¢â‚¬â€œ256 MiB".into()));
         }
         self.tt_megabytes = megabytes;
         Ok(self)
@@ -254,6 +254,38 @@ pub fn search_with_control(
 fn repeated(history: &[Position], position: Position) -> bool {
     history.iter().filter(|&&p| p == position).take(3).count() == 3
 }
+/// Exact continuations may be evicted or depend on reversible history.
+/// Only follow verified, same-depth exact entries with consistent scores.
+fn cached_line(
+    table: &tt::Table,
+    mut position: Position,
+    mut cutoff: tt::Cutoff,
+    mut depth: u8,
+    mut ply: u16,
+) -> Vec<Move> {
+    let mut line = Vec::new();
+    loop {
+        let next = position.successor(&cutoff.best_move);
+        line.push(cutoff.best_move);
+        depth -= 1;
+        ply += 1;
+        if depth == 0 || cutoff.bound != tt::Bound::Exact || !tt::clean_history(&[position, next]) {
+            break;
+        }
+        let lookup = table.lookup(next, depth, true, ply, -INF, INF);
+        let Some(entry) = lookup.cutoff else { break };
+        if entry.bound != tt::Bound::Exact
+            || entry.score != -cutoff.score
+            || !next.legal_moves().contains(&entry.best_move)
+        {
+            break;
+        }
+        position = next;
+        cutoff = entry;
+    }
+    line
+}
+
 struct Context {
     limits: SearchLimits,
     control: SearchControl,
@@ -340,9 +372,13 @@ impl Context {
             if lookup.hit {
                 self.tt_hits += 1;
             }
-            if let Some((score, pv)) = lookup.cutoff {
-                self.tt_cutoffs += 1;
-                return (score, pv);
+            if let Some(cutoff) = lookup.cutoff {
+                if moves.contains(&cutoff.best_move) {
+                    self.tt_cutoffs += 1;
+                    let score = cutoff.score;
+                    let pv = cached_line(table, position, cutoff, depth, ply);
+                    return (score, pv);
+                }
             }
             tt_move = lookup.best_move;
         }
@@ -396,7 +432,7 @@ impl Context {
             } else {
                 tt::Bound::Exact
             };
-            table.store(position, depth, clean, ply, best, bound, &pv);
+            table.store(position, depth, clean, ply, best, bound, &pv[0]);
         }
         (best, pv)
     }
@@ -551,6 +587,29 @@ mod tests {
     fn context(p: Position) -> Context {
         Context::new(vec![p], SearchLimits::default().with_tt_enabled(false))
     }
+    #[test]
+    fn cached_pv_uses_only_legal_exact_score_consistent_links() {
+        let root = *Game::default().position();
+        let first = root.choose_move().unwrap();
+        let child = root.successor(&first);
+        let second = child.choose_move().unwrap();
+        let mut table = tt::Table::new(1);
+        table.store(root, 2, true, 0, 12, tt::Bound::Exact, &first);
+        let reconstruct = |table: &tt::Table| {
+            let cutoff = table.lookup(root, 2, true, 0, -INF, INF).cutoff.unwrap();
+            cached_line(table, root, cutoff, 2, 0)
+        };
+        assert_eq!(reconstruct(&table), vec![first.clone()]);
+        table.store(child, 1, true, 1, -12, tt::Bound::Upper, &second);
+        assert_eq!(reconstruct(&table), vec![first.clone()]);
+        table.store(child, 1, true, 1, -11, tt::Bound::Exact, &second);
+        assert_eq!(reconstruct(&table), vec![first.clone()]);
+        table.store(child, 1, true, 1, -12, tt::Bound::Exact, &first);
+        assert_eq!(reconstruct(&table), vec![first.clone()]);
+        table.store(child, 1, true, 1, -12, tt::Bound::Exact, &second);
+        assert_eq!(reconstruct(&table), vec![first, second]);
+    }
+
     fn replay(game: &Game, pv: &[Move]) {
         let mut copy = game.clone();
         for mv in pv {
@@ -923,7 +982,7 @@ mod tests {
         ctx.table
             .as_mut()
             .unwrap()
-            .store(p, 4, true, 0, 1234, tt::Bound::Exact, &old);
+            .store(p, 4, true, 0, 1234, tt::Bound::Exact, &old[0]);
         let (score, pv) = ctx.negamax(p, 4, 0, -INF, INF, &[]);
         assert_eq!(score, uncached.score.unwrap());
         assert_ne!(score, 1234);

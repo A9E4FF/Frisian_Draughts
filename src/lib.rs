@@ -302,7 +302,11 @@ impl Position {
             captures.retain(|m| score(m) == best);
             captures
         };
-        moves.sort_by_key(|m| (m.from, m.to, m.captured()));
+        moves.sort_unstable_by(|a, b| {
+            (a.from, a.to)
+                .cmp(&(b.from, b.to))
+                .then_with(|| squares(a.captured).cmp(squares(b.captured)))
+        });
         moves.dedup();
         moves
     }

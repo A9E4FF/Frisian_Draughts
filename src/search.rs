@@ -58,7 +58,9 @@ impl SearchLimits {
                 ..Self::default()
             })
         } else {
-            Err(Error("depth must be 1Ã¢â‚¬â€œ64".into()))
+            Err(Error(
+                "depth must be 1–64".into(),
+            ))
         }
     }
     pub fn max_depth(self) -> u8 {
@@ -89,7 +91,9 @@ impl SearchLimits {
     }
     pub fn with_tt_megabytes(mut self, megabytes: usize) -> Result<Self, Error> {
         if !(1..=256).contains(&megabytes) {
-            return Err(Error("TT memory must be 1Ã¢â‚¬â€œ256 MiB".into()));
+            return Err(Error(
+                "TT memory must be 1–256 MiB".into(),
+            ));
         }
         self.tt_megabytes = megabytes;
         Ok(self)
@@ -286,6 +290,86 @@ fn cached_line(
     line
 }
 
+const QUIET_MOVES: usize = 50 * 50;
+const KILLER_PLIES: usize = 64;
+
+struct MoveOrdering {
+    history: [[i16; QUIET_MOVES]; 2],
+    killers: [[Option<usize>; 2]; KILLER_PLIES],
+}
+
+impl Default for MoveOrdering {
+    fn default() -> Self {
+        Self {
+            history: [[0; QUIET_MOVES]; 2],
+            killers: [[None; 2]; KILLER_PLIES],
+        }
+    }
+}
+
+impl MoveOrdering {
+    fn quiet_index(mv: &Move) -> usize {
+        usize::from(mv.from().number() - 1) * 50 + usize::from(mv.to().number() - 1)
+    }
+
+    fn quiet_score(&self, side: Side, ply: u16, mv: &Move) -> i32 {
+        let index = Self::quiet_index(mv);
+        let killers = &self.killers[usize::from(ply)];
+        if killers[0] == Some(index) {
+            return 32_769;
+        }
+        if killers[1] == Some(index) {
+            return 32_768;
+        }
+        i32::from(self.history[side.index()][index])
+    }
+
+    fn record_cutoff(&mut self, side: Side, ply: u16, depth: u8, mv: &Move) {
+        let index = Self::quiet_index(mv);
+        let killers = &mut self.killers[usize::from(ply)];
+        if killers[0] != Some(index) {
+            *killers = [Some(index), killers[0]];
+        }
+        let score = &mut self.history[side.index()][index];
+        let bonus = i32::from(depth).pow(2);
+        *score = (i32::from(*score) + bonus * (16_384 - i32::from(*score)) / 16_384) as i16;
+    }
+
+    fn order(
+        &self,
+        moves: &mut [Move],
+        side: Side,
+        ply: u16,
+        pv: Option<&Move>,
+        tt: Option<&Move>,
+    ) {
+        // Preserve original order for tied weights and never rank captures
+        // by a quiet move's endpoint-only index.
+        let capture = moves[0].is_capture();
+        let score = |mv: &Move| {
+            if Some(mv) == pv {
+                32_771
+            } else if Some(mv) == tt {
+                32_770
+            } else if capture {
+                0
+            } else {
+                self.quiet_score(side, ply, mv)
+            }
+        };
+        // Stable insertion sort uses the already allocated move buffer.
+        // Most legal lists are short or nearly sorted.
+        for end in 1..moves.len() {
+            let weight = score(&moves[end]);
+            let mut index = end;
+            while index > 0 && score(&moves[index - 1]) < weight {
+                index -= 1;
+            }
+            moves[index..=end].rotate_right(1);
+        }
+    }
+}
+
 struct Context {
     limits: SearchLimits,
     control: SearchControl,
@@ -296,6 +380,7 @@ struct Context {
     nodes: u64,
     qnodes: u64,
     table: Option<tt::Table>,
+    ordering: MoveOrdering,
     tt_probes: u64,
     tt_hits: u64,
     tt_cutoffs: u64,
@@ -311,6 +396,7 @@ impl Context {
             history,
             nodes: 0,
             qnodes: 0,
+            ordering: MoveOrdering::default(),
             table: limits
                 .tt_enabled
                 .then(|| tt::Table::new(limits.tt_megabytes)),
@@ -382,18 +468,13 @@ impl Context {
             }
             tt_move = lookup.best_move;
         }
-        if let Some(first) = tt_move.as_ref() {
-            if let Some(index) = moves.iter().position(|mv| mv == first) {
-                let mv = moves.remove(index);
-                moves.insert(0, mv);
-            }
-        }
-        if let Some(first) = preferred.first() {
-            if let Some(index) = moves.iter().position(|mv| mv == first) {
-                let mv = moves.remove(index);
-                moves.insert(0, mv);
-            }
-        }
+        self.ordering.order(
+            &mut moves,
+            position.turn,
+            ply,
+            preferred.first(),
+            tt_move.as_ref(),
+        );
         let original_alpha = alpha;
         let mut alpha = alpha;
         let mut best = -INF;
@@ -421,6 +502,11 @@ impl Context {
             }
             alpha = alpha.max(best);
             if alpha >= beta {
+                let cutoff = &pv[0];
+                if !cutoff.is_capture() {
+                    self.ordering
+                        .record_cutoff(position.turn, ply, depth, cutoff);
+                }
                 break;
             }
         }

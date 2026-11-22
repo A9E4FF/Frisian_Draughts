@@ -4,7 +4,6 @@ use crate::{Move, Position, Side};
 use std::mem::size_of;
 
 const CLUSTER: usize = 4;
-const MAX_PV: usize = 128;
 const MATE_THRESHOLD: i32 = 20_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,13 +21,20 @@ struct Entry {
     bound: Bound,
     clean: bool,
     generation: u8,
-    pv: Box<[Move]>,
+    best_move: Move,
+}
+
+#[derive(Clone)]
+pub(crate) struct Cutoff {
+    pub score: i32,
+    pub best_move: Move,
+    pub bound: Bound,
 }
 
 pub(crate) struct Lookup {
     pub hit: bool,
     pub best_move: Option<Move>,
-    pub cutoff: Option<(i32, Vec<Move>)>,
+    pub cutoff: Option<Cutoff>,
 }
 
 pub(crate) struct Table {
@@ -38,9 +44,7 @@ pub(crate) struct Table {
 }
 impl Table {
     pub fn new(megabytes: usize) -> Self {
-        // Reserve worst-case boxed PV bytes as well as slot metadata. This
-        // deliberately trades capacity for a strict allocation upper bound.
-        let maximum_entry = size_of::<Option<Entry>>() + MAX_PV * size_of::<Move>();
+        let maximum_entry = size_of::<Option<Entry>>();
         let clusters = (megabytes * 1024 * 1024 / (CLUSTER * maximum_entry)).max(1);
         let clusters = 1usize << (usize::BITS - 1 - clusters.leading_zeros());
         let slots = std::iter::repeat_with(|| None)
@@ -56,7 +60,7 @@ impl Table {
         self.slots.len()
     }
     pub fn storage_budget_bytes(&self) -> usize {
-        self.slots.capacity() * (size_of::<Option<Entry>>() + MAX_PV * size_of::<Move>())
+        self.slots.capacity() * (size_of::<Option<Entry>>())
     }
     pub fn start_iteration(&mut self, generation: u8) {
         self.generation = generation;
@@ -100,7 +104,7 @@ impl Table {
             }
             result.hit = true;
             if result.best_move.is_none() || entry.depth > ordering_depth {
-                result.best_move = entry.pv.first().cloned();
+                result.best_move = Some(entry.best_move.clone());
                 ordering_depth = entry.depth;
             }
             if !clean || !entry.clean || entry.depth != depth {
@@ -111,7 +115,11 @@ impl Table {
                 || (entry.bound == Bound::Lower && score >= beta)
                 || (entry.bound == Bound::Upper && score <= alpha)
             {
-                result.cutoff = Some((score, entry.pv.to_vec()));
+                result.cutoff = Some(Cutoff {
+                    score,
+                    best_move: entry.best_move.clone(),
+                    bound: entry.bound,
+                });
                 break;
             }
         }
@@ -126,7 +134,7 @@ impl Table {
         ply: u16,
         score: i32,
         bound: Bound,
-        pv: &[Move],
+        best_move: &Move,
     ) {
         self.store_key(
             key(&position),
@@ -136,7 +144,7 @@ impl Table {
             ply,
             score,
             bound,
-            pv,
+            best_move,
         );
     }
     #[allow(clippy::too_many_arguments)]
@@ -149,11 +157,8 @@ impl Table {
         ply: u16,
         score: i32,
         bound: Bound,
-        pv: &[Move],
+        best_move: &Move,
     ) {
-        if pv.is_empty() || pv.len() > MAX_PV {
-            return;
-        }
         let start = self.cluster(key);
         let cluster = &self.slots[start..start + CLUSTER];
         let replacement = cluster
@@ -183,7 +188,7 @@ impl Table {
             score: to_table(score, ply),
             bound,
             generation: self.generation,
-            pv: pv.to_vec().into_boxed_slice(),
+            best_move: best_move.clone(),
         });
     }
 }
@@ -288,22 +293,22 @@ mod tests {
         let mut q = p;
         q.turn = Side::Black;
         let mut table = Table::new(1);
-        let pv = vec![p.choose_move().unwrap()];
-        table.store_key(7, p, 4, true, 0, 12, Bound::Exact, &pv);
+        let mv = p.choose_move().unwrap();
+        table.store_key(7, p, 4, true, 0, 12, Bound::Exact, &mv);
         assert!(!table.lookup_key(7, q, 4, true, 0, -100, 100).hit);
         assert_eq!(
             table
                 .lookup_key(7, p, 4, true, 0, -100, 100)
                 .cutoff
                 .unwrap()
-                .0,
+                .score,
             12
         );
     }
     #[test]
     fn bounds_depth_and_history_are_required_for_score_reuse() {
         let p = position();
-        let pv = vec![p.choose_move().unwrap()];
+        let mv = p.choose_move().unwrap();
         for (bound, alpha, beta, cutoff) in [
             (Bound::Exact, -100, 100, true),
             (Bound::Lower, 0, 10, true),
@@ -312,7 +317,7 @@ mod tests {
             (Bound::Upper, 0, 20, false),
         ] {
             let mut t = Table::new(1);
-            t.store(p, 4, true, 0, 12, bound, &pv);
+            t.store(p, 4, true, 0, 12, bound, &mv);
             assert_eq!(
                 t.lookup(p, 4, true, 0, alpha, beta).cutoff.is_some(),
                 cutoff
@@ -320,11 +325,11 @@ mod tests {
             assert!(t.lookup(p, 3, true, 0, alpha, beta).cutoff.is_none());
             let dirty = t.lookup(p, 4, false, 0, alpha, beta);
             assert!(dirty.hit);
-            assert_eq!(dirty.best_move, pv.first().cloned());
+            assert_eq!(dirty.best_move, Some(mv.clone()));
             assert!(dirty.cutoff.is_none());
         }
         let mut t = Table::new(1);
-        t.store(p, 4, false, 0, 12, Bound::Exact, &pv);
+        t.store(p, 4, false, 0, 12, Bound::Exact, &mv);
         assert!(t.lookup(p, 4, true, 0, -100, 100).cutoff.is_none());
     }
     #[test]
@@ -336,10 +341,7 @@ mod tests {
         assert_eq!(from_table(to_table(-29990, 7), 3), -29994);
         for mb in [1, 16, 256] {
             let t = Table::new(mb);
-            assert!(
-                t.slots.capacity() * (size_of::<Option<Entry>>() + MAX_PV * size_of::<Move>())
-                    <= mb * 1024 * 1024
-            );
+            assert!(t.slots.capacity() * (size_of::<Option<Entry>>()) <= mb * 1024 * 1024);
         }
     }
     #[test]
@@ -355,7 +357,6 @@ mod tests {
     fn cluster_replacement_is_bounded_and_prefers_old_shallow_entries() {
         let p = position();
         let mv = p.choose_move().unwrap();
-        let pv = vec![mv.clone()];
         let mut table = Table::new(1);
         table.start_iteration(1);
         let stride = table.mask as u64 + 1;
@@ -368,12 +369,12 @@ mod tests {
                 0,
                 n as i32,
                 Bound::Exact,
-                &pv,
+                &mv,
             );
         }
         let capacity = table.slots.len();
         table.start_iteration(2);
-        table.store_key(7 + 4 * stride, p, 1, true, 0, 99, Bound::Exact, &pv);
+        table.store_key(7 + 4 * stride, p, 1, true, 0, 99, Bound::Exact, &mv);
         assert!(!table.lookup_key(7, p, 1, true, 0, -100, 100).hit);
         assert!(
             table
@@ -385,16 +386,13 @@ mod tests {
                 .lookup_key(7 + 4 * stride, p, 1, true, 0, -100, 100)
                 .cutoff
                 .unwrap()
-                .0,
+                .score,
             99
         );
         for n in 5..1000 {
-            table.store_key(7 + n * stride, p, 1, true, 0, 0, Bound::Exact, &pv);
+            table.store_key(7 + n * stride, p, 1, true, 0, 0, Bound::Exact, &mv);
         }
         assert_eq!(table.slots.len(), capacity);
-        let mut fresh = Table::new(1);
-        fresh.store(p, 1, true, 0, 0, Bound::Exact, &vec![mv; MAX_PV + 1]);
-        assert!(!fresh.lookup(p, 1, true, 0, -100, 100).hit);
     }
     #[test]
     fn king_capture_alone_resets_repetition_context() {

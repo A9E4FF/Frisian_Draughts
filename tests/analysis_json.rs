@@ -122,7 +122,7 @@ fn forced_root_analysis_and_zero_time_are_distinct_from_playing_shortcut() {
     assert_eq!(result["status"], "completed");
     assert_eq!(result["depth"], 3);
     assert_eq!(result["score"], 29_999);
-    assert_eq!(result["best_move"], "28x19");
+    assert_eq!(result["best_move"], "28x19x23");
     let events = request_forced(0);
     let result = events.last().unwrap();
     assert_eq!(result["status"], "time_limit");

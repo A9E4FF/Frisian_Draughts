@@ -1,9 +1,10 @@
 //! Line-delimited JSON bridge for the Python position suite.
-use frisian_draughts::search::{search_with_reporter, SearchLimits, SearchResult};
+use frisian_draughts::search::{search_with_reporter, SearchLimits, SearchResult, SearchStatus};
 use frisian_draughts::{Game, KingRestriction, Outcome, Piece, Position, Side, Square};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+use std::time::Duration;
 
 #[derive(Deserialize)]
 struct Request {
@@ -22,6 +23,10 @@ struct Request {
     tt_enabled: bool,
     #[serde(default = "default_memory")]
     tt_megabytes: usize,
+    #[serde(default)]
+    search_forced_root: bool,
+    #[serde(default)]
+    time_limit_ms: Option<u64>,
 }
 fn default_command() -> String {
     "analyze".into()
@@ -74,7 +79,16 @@ fn result_event(kind: &str, r: &SearchResult, accepted: &[String]) -> Value {
     } else {
         Some(best.as_ref().is_some_and(|s| accepted.contains(s)))
     };
-    json!({"type":kind,"depth":r.completed_depth,"score":r.score,"best_move":best,
+    let status = match r.status {
+        SearchStatus::Completed => "completed",
+        SearchStatus::Terminal => "terminal",
+        SearchStatus::ForcedMove => "forced_move",
+        SearchStatus::Cancelled => "cancelled",
+        SearchStatus::NodeLimit => "node_limit",
+        SearchStatus::TimeLimit => "time_limit",
+    };
+    json!({"type":kind,"status":status,"tt_capacity":r.tt_capacity,
+        "tt_storage_budget_bytes":r.tt_storage_budget_bytes,"depth":r.completed_depth,"score":r.score,"best_move":best,
         "pv":r.principal_variation.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "nodes":r.nodes,"quiescence_nodes":r.quiescence_nodes,"elapsed_ms":r.elapsed.as_secs_f64()*1000.0,
         "tt_probes":r.tt_probes,"tt_hits":r.tt_hits,"tt_cutoffs":r.tt_cutoffs,"passed":passed})
@@ -83,10 +97,14 @@ fn handle(request: Request, out: &mut impl Write) -> Result<(), String> {
     if !["inspect", "analyze"].contains(&request.command.as_str()) {
         return Err("command must be inspect or analyze".into());
     }
-    let limits = SearchLimits::new(request.depth)
+    let mut limits = SearchLimits::new(request.depth)
         .and_then(|l| l.with_tt_megabytes(request.tt_megabytes))
         .map_err(|e| e.to_string())?
-        .with_tt_enabled(request.tt_enabled);
+        .with_tt_enabled(request.tt_enabled)
+        .with_forced_root_search(request.search_forced_root);
+    if let Some(ms) = request.time_limit_ms {
+        limits = limits.with_max_time(Duration::from_millis(ms));
+    }
     let mut position = Position::from_fen(&request.fen).map_err(|e| e.to_string())?;
     if let Some(restrictions) = request.restrictions {
         let parse = |r: Option<Restriction>| -> Result<Option<KingRestriction>, String> {

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "positions": [
+    {
+      "id": "benchmark-kings",
+      "name": "Flying kings with men",
+      "fen": "W:WK1,46:BK5,20",
+      "moves": [],
+      "restrictions": {},
+      "enabled": true
+    },
+    {
+      "id": "benchmark-forced",
+      "name": "Sole capture to terminal",
+      "fen": "W:W28:B23",
+      "moves": [],
+      "restrictions": {},
+      "enabled": true
+    },
+    {
+      "id": "benchmark-restriction",
+      "name": "White king at move cap",
+      "fen": "W:WK1,46:BK5,20",
+      "moves": [],
+      "restrictions": {
+        "white": {
+          "square": 1,
+          "count": 3
+        }
+      },
+      "enabled": true
+    }
+  ]
+}

@@ -36,6 +36,7 @@ pub struct SearchLimits {
     tt_megabytes: usize,
     max_nodes: Option<u64>,
     max_time: Option<Duration>,
+    search_forced_root: bool,
 }
 impl Default for SearchLimits {
     fn default() -> Self {
@@ -45,6 +46,7 @@ impl Default for SearchLimits {
             tt_megabytes: 16,
             max_nodes: None,
             max_time: None,
+            search_forced_root: false,
         }
     }
 }
@@ -73,6 +75,11 @@ impl SearchLimits {
         self.max_time = Some(duration);
         self
     }
+    /// Search a sole legal move to obtain a completed analysis score.
+    pub fn with_forced_root_search(mut self, enabled: bool) -> Self {
+        self.search_forced_root = enabled;
+        self
+    }
     pub fn with_tt_enabled(mut self, enabled: bool) -> Self {
         self.tt_enabled = enabled;
         self
@@ -92,6 +99,16 @@ impl SearchLimits {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchStatus {
+    Completed,
+    Terminal,
+    ForcedMove,
+    Cancelled,
+    NodeLimit,
+    TimeLimit,
+}
+
 #[derive(Clone, Debug)]
 pub struct SearchResult {
     pub best_move: Option<Move>,
@@ -107,6 +124,10 @@ pub struct SearchResult {
     pub tt_probes: u64,
     pub tt_hits: u64,
     pub tt_cutoffs: u64,
+    pub tt_capacity: usize,
+    /// Upper bound on storage allocated for the TT slots and their payloads.
+    pub tt_storage_budget_bytes: usize,
+    pub status: SearchStatus,
 }
 
 /// Provisional, symmetric material/edge evaluator, from the side to move.
@@ -171,12 +192,16 @@ pub fn search_with_control(
         tt_probes: 0,
         tt_hits: 0,
         tt_cutoffs: 0,
+        tt_capacity: 0,
+        tt_storage_budget_bytes: 0,
+        status: SearchStatus::Terminal,
     };
     if moves.is_empty() {
         result.score = Some(-MATE);
     } else if repeated(&game.history, position) {
         result.score = Some(0);
-    } else if moves.len() == 1 {
+    } else if moves.len() == 1 && !limits.search_forced_root {
+        result.status = SearchStatus::ForcedMove;
         result.best_move = Some(moves[0].clone());
         result.principal_variation = moves;
     } else {
@@ -185,6 +210,11 @@ pub fn search_with_control(
         let mut context = Context::new(game.history.clone(), limits);
         context.control = control;
         context.started = start;
+        result.status = SearchStatus::Completed;
+        if let Some(table) = &context.table {
+            result.tt_capacity = table.capacity();
+            result.tt_storage_budget_bytes = table.storage_budget_bytes();
+        }
         let mut previous = Vec::new();
         for depth in 1..=limits.max_depth {
             if let Some(table) = &mut context.table {
@@ -213,6 +243,7 @@ pub fn search_with_control(
         result.tt_hits = context.tt_hits;
         result.tt_cutoffs = context.tt_cutoffs;
         result.elapsed = start.elapsed();
+        result.status = context.stop_reason.unwrap_or(SearchStatus::Completed);
         return result;
     }
     result.elapsed = start.elapsed();
@@ -228,6 +259,7 @@ struct Context {
     control: SearchControl,
     started: Instant,
     aborted: bool,
+    stop_reason: Option<SearchStatus>,
     history: Vec<Position>,
     nodes: u64,
     qnodes: u64,
@@ -243,6 +275,7 @@ impl Context {
             control: SearchControl::default(),
             started: Instant::now(),
             aborted: false,
+            stop_reason: None,
             history,
             nodes: 0,
             qnodes: 0,
@@ -255,10 +288,12 @@ impl Context {
         }
     }
     fn interrupted(&mut self) -> bool {
-        let mut stop = self.control.stopped.load(Ordering::Relaxed)
-            || self.limits.max_nodes.is_some_and(|n| self.nodes >= n);
-        if self.nodes.is_multiple_of(256) {
-            stop |= self
+        if self.control.is_stopped() {
+            self.stop_reason = Some(SearchStatus::Cancelled);
+        } else if self.limits.max_nodes.is_some_and(|n| self.nodes >= n) {
+            self.stop_reason = Some(SearchStatus::NodeLimit);
+        } else if self.nodes.is_multiple_of(256)
+            && (self
                 .limits
                 .max_time
                 .is_some_and(|d| self.started.elapsed() >= d)
@@ -267,9 +302,11 @@ impl Context {
                     .deadline
                     .lock()
                     .unwrap()
-                    .is_some_and(|(start, d)| start.elapsed() >= d);
+                    .is_some_and(|(start, d)| start.elapsed() >= d))
+        {
+            self.stop_reason = Some(SearchStatus::TimeLimit);
         }
-        self.aborted |= stop;
+        self.aborted |= self.stop_reason.is_some();
         self.aborted
     }
     fn negamax(

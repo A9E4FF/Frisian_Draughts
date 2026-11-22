@@ -52,6 +52,12 @@ impl Table {
             generation: 0,
         }
     }
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+    pub fn storage_budget_bytes(&self) -> usize {
+        self.slots.capacity() * (size_of::<Option<Entry>>() + MAX_PV * size_of::<Move>())
+    }
     pub fn start_iteration(&mut self, generation: u8) {
         self.generation = generation;
     }

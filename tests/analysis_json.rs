@@ -108,3 +108,25 @@ fn legal_but_unselected_expected_move_is_a_failure_not_an_error() {
     assert_eq!(result["best_move"], "31-27");
     assert_eq!(result["passed"], false);
 }
+
+#[test]
+fn forced_root_analysis_and_zero_time_are_distinct_from_playing_shortcut() {
+    let request_forced = |time| {
+        request(
+            json!({"fen":"W:W28:B23","depth":3,"search_forced_root":true,
+            "time_limit_ms":time}),
+        )
+    };
+    let events = request_forced(10_000);
+    let result = events.last().unwrap();
+    assert_eq!(result["status"], "completed");
+    assert_eq!(result["depth"], 3);
+    assert_eq!(result["score"], 29_999);
+    assert_eq!(result["best_move"], "28x19");
+    let events = request_forced(0);
+    let result = events.last().unwrap();
+    assert_eq!(result["status"], "time_limit");
+    assert_eq!(result["depth"], 0);
+    assert!(result["score"].is_null());
+    assert!(!events.iter().any(|event| event["type"] == "iteration"));
+}
